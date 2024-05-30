@@ -919,6 +919,12 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseAcquireDatabase(req *
 
 	// essentially checks the current state of the protocol
 	// and ensure that the the caller is holding the lock
+	if certauditor.CurrentState == Completed {
+		reply.Status = true
+		reply.FTNeeded = false
+		return nil
+	}
+
 	if certauditor.CurrentState != FaultTolerance {
 		reply.Status = false
 		return nil
@@ -938,6 +944,7 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseAcquireDatabase(req *
 		return err
 	}
 
+	reply.FTNeeded = true
 	reply.Status = true
 	reply.Database = database
 
