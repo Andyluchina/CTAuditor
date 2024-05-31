@@ -212,3 +212,13 @@ type FaultTolerancePhaseReportResultRequest struct {
 type FaultTolerancePhaseReportResultReply struct {
 	Status bool
 }
+
+type AuditorReport struct {
+	TotalClients      uint32
+	MaxSitOut         uint32
+	CalculatedEntries [][][]byte
+}
+
+type ReportStatsReply struct {
+	Status bool
+}

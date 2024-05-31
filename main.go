@@ -52,9 +52,12 @@ func main() {
 
 	port := args[2]
 
+	collector_address := args[3]
+
 	threshold := uint32(numClients - clients_sit_out - 1)
 
 	CTLogAuditor := new(services.CTLogCheckerAuditor)
+	CTLogAuditor.CollectorAddress = collector_address
 	CTLogAuditor.ShuffleDatabase = "database.json"
 	CTLogAuditor.ZKDatabase = "zkdatabase.json"
 	CTLogAuditor.TotalClients = uint32(numClients)

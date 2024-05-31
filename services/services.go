@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net/rpc"
 	"os"
 	"sync"
 
@@ -40,6 +41,8 @@ type CTLogCheckerAuditor struct {
 	Shamir_curve               *curves.Curve
 	CurrentFaultToleranceCount uint32
 	Shamir_pieces              uint32
+	CalculatedEntries          [][][]byte
+	CollectorAddress           string
 	mu                         sync.Mutex // locking the thread such that all of the requests are handled sequentially
 }
 
@@ -905,6 +908,31 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datas
 				extracted_cert, _ := ExtractData(result[j])
 				fmt.Println(extracted_cert)
 			}
+			certauditor.CalculatedEntries = result
+			// report to the collector
+			collector_interface, err := rpc.DialHTTP("tcp", certauditor.CollectorAddress)
+
+			if err != nil {
+				log.Fatal("dialing:", err)
+			}
+
+			var report_stats_reply datastruct.ReportStatsReply
+			report_stats_req := datastruct.AuditorReport{}
+
+			report_stats_req.CalculatedEntries = certauditor.CalculatedEntries
+			report_stats_req.TotalClients = certauditor.TotalClients
+			report_stats_req.MaxSitOut = certauditor.MaxSitOut
+			status_reported := false
+
+			for !status_reported {
+				err = collector_interface.Call("Collector.ReportStatsAuditor", report_stats_req, &report_stats_reply)
+				if err != nil {
+					log.Fatal("arith error:", err)
+				}
+				if report_stats_reply.Status {
+					status_reported = true
+				}
+			}
 		}
 
 	}
@@ -1043,6 +1071,32 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseReportResult(req *dat
 		for j := 0; j < len(result); j++ {
 			extracted_cert, _ := ExtractData(result[j])
 			fmt.Println(extracted_cert)
+		}
+		certauditor.CalculatedEntries = result
+
+		// report to the collector
+		collector_interface, err := rpc.DialHTTP("tcp", certauditor.CollectorAddress)
+
+		if err != nil {
+			log.Fatal("dialing:", err)
+		}
+
+		var report_stats_reply datastruct.ReportStatsReply
+		report_stats_req := datastruct.AuditorReport{}
+
+		report_stats_req.CalculatedEntries = certauditor.CalculatedEntries
+		report_stats_req.TotalClients = certauditor.TotalClients
+		report_stats_req.MaxSitOut = certauditor.MaxSitOut
+		status_reported := false
+
+		for !status_reported {
+			err = collector_interface.Call("Collector.ReportStatsAuditor", report_stats_req, &report_stats_reply)
+			if err != nil {
+				log.Fatal("arith error:", err)
+			}
+			if report_stats_reply.Status {
+				status_reported = true
+			}
 		}
 	}
 
