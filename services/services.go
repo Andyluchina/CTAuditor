@@ -485,7 +485,16 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 
 		shuffle_time_part1 := time.Since(start_part1).Seconds()
 		// call the client shuffle
-		err = client.Call("Client.ClientShuffle", shuffle_request, &shuffle_reply)
+
+		client_took_call := false
+
+		for !client_took_call {
+			err = client.Call("Client.ClientShuffle", shuffle_request, &shuffle_reply)
+			if err == nil {
+				log.Println(err)
+				client_took_call = true
+			}
+		}
 
 		// fmt.Println(shuffle_reply)
 		start_part2 := time.Now()
