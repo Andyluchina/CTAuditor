@@ -407,7 +407,7 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntrySecreteShare(req *data
 	return nil
 }
 
-func (certauditor *CTLogCheckerAuditor) PerformShuffle(req datastruct.ShuffleInitRequest, reply datastruct.ShuffleInitReply) error {
+func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req datastruct.ShuffleInitRequest, reply datastruct.ShuffleInitReply) error {
 	certauditor.mu.Lock()
 	defer certauditor.mu.Unlock()
 
