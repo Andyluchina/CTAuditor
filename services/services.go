@@ -448,14 +448,19 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 
 		start_part1 := time.Now()
 		client_ip := client_info[i].IP + ":80"
-
 		// connect to the client
-		client, err := rpc.Dial("tcp", client_ip)
 
-		if err != nil {
-			reply.Status = false
-			panic(err)
+		client_connected := false
+		var client *rpc.Client
+		for !client_connected {
+			client, err = rpc.Dial("tcp", client_ip)
 
+			if err == nil {
+				client_connected = true
+			} else {
+				log.Println(err)
+				fmt.Println("dialing client failed. retrying")
+			}
 		}
 
 		// read database
