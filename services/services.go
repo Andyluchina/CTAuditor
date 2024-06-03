@@ -876,7 +876,7 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 		certauditor.PerClientCPU[proving_client].ShuffleTime = shuffle_time_part1 + shuffle_time_part2
 
 		fmt.Println("client shuffled successfully", proving_client)
-
+		client.Close()
 	}
 	reply.Status = true
 	fmt.Println("Shuffling done")
