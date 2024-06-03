@@ -407,19 +407,23 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntrySecreteShare(req *data
 	return nil
 }
 
-func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req datastruct.ShuffleInitRequest, reply datastruct.ShuffleInitReply) error {
+func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.ShuffleInitRequest, reply *datastruct.ShuffleInitReply) error {
 	certauditor.mu.Lock()
 	defer certauditor.mu.Unlock()
 
 	if certauditor.CurrentState < Shuffle {
+		fmt.Println("Ping Rejected")
 		reply.Status = false
 		return nil
 	}
 
 	if certauditor.CurrentState > Shuffle {
+		fmt.Println("Ping Rejected")
 		reply.Status = true
 		return nil
 	}
+
+	fmt.Println("Ping Accepted")
 
 	data, err := ReadDatabase(certauditor)
 
