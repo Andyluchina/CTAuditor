@@ -487,6 +487,7 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 		// call the client shuffle
 		err = client.Call("Client.ClientShuffle", shuffle_request, &shuffle_reply)
 
+		fmt.Println(shuffle_reply)
 		start_part2 := time.Now()
 		// read the zkdatabase
 		zkdata, err := ReadZKDatabase(certauditor)
