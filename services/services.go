@@ -950,6 +950,8 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientAcquireDatabase(req *da
 		}
 	}
 
+	reply.ZK_info = zkdatabase.ZK_info
+
 	reply.Database = database
 	reply.Status = true
 
