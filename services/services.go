@@ -47,6 +47,7 @@ type CTLogCheckerAuditor struct {
 	StartTime                  time.Time
 	PerClientCPU               []datastruct.AuditorClientCPUReport
 	MyIP                       string
+	RevealZK                   []*datastruct.ZKRecords
 	mu                         sync.Mutex // locking the thread such that all of the requests are handled sequentially
 }
 
@@ -874,6 +875,28 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 
 		if len(database.Shufflers_info) == int(certauditor.TotalClients) {
 			certauditor.CurrentState = Reveal
+			// read ZK database
+			zkdata, err := ReadZKDatabase(certauditor)
+			if err != nil {
+				reply.Status = false
+				return nil
+			}
+
+			var zkdatabase datastruct.ZKDatabase
+			err = json.Unmarshal(zkdata, &zkdatabase)
+			if err != nil {
+				log.Fatalf("Error unmarshaling the JSON: %v", err)
+				reply.Status = false
+				return nil
+			}
+
+			for i := 0; i < len(zkdatabase.ZK_info); i++ {
+				if i != len(zkdatabase.ZK_info)-1 {
+					zkdatabase.ZK_info[i].ShuffleProof.EntriesAfterShuffle = nil
+				}
+			}
+
+			certauditor.RevealZK = zkdatabase.ZK_info
 		}
 
 		shuffle_time_part2 := time.Since(start_part2).Seconds()
@@ -929,28 +952,7 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientAcquireDatabase(req *da
 		return nil
 	}
 
-	// read ZK database
-	zkdata, err := ReadZKDatabase(certauditor)
-	if err != nil {
-		reply.Status = false
-		return nil
-	}
-
-	var zkdatabase datastruct.ZKDatabase
-	err = json.Unmarshal(zkdata, &zkdatabase)
-	if err != nil {
-		log.Fatalf("Error unmarshaling the JSON: %v", err)
-		reply.Status = false
-		return nil
-	}
-
-	for i := 0; i < len(zkdatabase.ZK_info); i++ {
-		if i != len(zkdatabase.ZK_info)-1 {
-			zkdatabase.ZK_info[i].ShuffleProof.EntriesAfterShuffle = nil
-		}
-	}
-
-	reply.ZK_info = zkdatabase.ZK_info
+	reply.ZK_info = certauditor.RevealZK
 
 	reply.Database = database
 	reply.Status = true
