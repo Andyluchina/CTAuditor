@@ -944,20 +944,11 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientAcquireDatabase(req *da
 		return nil
 	}
 
-	order, err := LocateShuffleOrderWithID(req.ShufflerID, database.Shufflers_info)
-
-	if err != nil {
-		reply.Status = false
-		return nil
-	}
-
-	for i := 0; i < order; i++ {
-		if i != order-1 {
+	for i := 0; i < len(zkdatabase.ZK_info); i++ {
+		if i != len(zkdatabase.ZK_info)-1 {
 			zkdatabase.ZK_info[i].ShuffleProof.EntriesAfterShuffle = nil
 		}
 	}
-
-	zkdatabase.ZK_info = zkdatabase.ZK_info[:order]
 
 	reply.Database = database
 	reply.Status = true
