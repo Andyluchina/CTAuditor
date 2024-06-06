@@ -14,7 +14,6 @@ import (
 	"net/rpc"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/coinbase/kryptology/pkg/core/curves"
 	"github.com/coinbase/kryptology/pkg/sharing"
@@ -44,9 +43,6 @@ type CTLogCheckerAuditor struct {
 	Shamir_pieces              uint32
 	CalculatedEntries          [][][]byte
 	CollectorAddress           string
-	StartTime                  time.Time
-	PerClientCPU               []datastruct.AuditorClientCPUReport
-	MyIP                       string
 	mu                         sync.Mutex // locking the thread such that all of the requests are handled sequentially
 }
 
@@ -244,7 +240,6 @@ func (certauditor *CTLogCheckerAuditor) RegisterClient(request *datastruct.Regis
 		H_i:      request.H_shuffle,
 		G_i:      request.G_shuffle,
 		DH_Pub_H: request.DH_Pub_H,
-		IP:       request.IP,
 	}
 
 	// check if the client has already registered
@@ -275,7 +270,6 @@ func (certauditor *CTLogCheckerAuditor) RegisterClient(request *datastruct.Regis
 		database.RSA_subgroup_p_prime = p_prime
 		database.RSA_subgroup_q_prime = q_prime
 		fmt.Println("Found the group and subgroup primes.")
-		certauditor.StartTime = time.Now()
 	}
 
 	WriteRevealInfoToDatabase(certauditor, &database)
@@ -302,8 +296,6 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 		reply.Status = false
 		return nil
 	}
-
-	start := time.Now()
 
 	data, err := ReadDatabase(certauditor)
 	if err != nil {
@@ -337,11 +329,6 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 
 	reply.Status = true
 	reply.Shuffle_PubKeys = database.Shuffle_PubKeys
-
-	elapsed := time.Since(start)
-	inital_report_time_seconds := elapsed.Seconds()
-
-	certauditor.PerClientCPU[req.ShufflerID].InitialReportingTime = inital_report_time_seconds
 	return nil
 }
 
@@ -360,8 +347,6 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntrySecreteShare(req *data
 		reply.Status = false
 		return nil
 	}
-
-	start := time.Now()
 
 	data, err := ReadDatabase(certauditor)
 	if err != nil {
@@ -393,505 +378,44 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntrySecreteShare(req *data
 	if len(database.Entries) == int(certauditor.TotalClients) {
 		fmt.Println("state changed to shuffle")
 		certauditor.CurrentState = Shuffle
-		// certauditor.CurrentShuffler = -1
+		certauditor.CurrentShuffler = -1
 	}
 
 	// unhold the lock
 	certauditor.CurrentInitialReporter = -1
 	reply.Status = true
-
-	elapsed := time.Since(start)
-	secrete_share_time_seconds := elapsed.Seconds()
-
-	certauditor.PerClientCPU[req.ShufflerID].SecreteSharing = secrete_share_time_seconds
 	return nil
 }
 
-func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.ShuffleInitRequest, reply *datastruct.ShuffleInitReply) error {
+func (certauditor *CTLogCheckerAuditor) ShufflePhaseAccquireLock(req *datastruct.ShufflePhaseAccquireLockRequest, reply *datastruct.ShufflePhaseAccquireLockReply) error {
 	certauditor.mu.Lock()
 	defer certauditor.mu.Unlock()
 
-	if certauditor.CurrentState < Shuffle {
-		fmt.Println("Ping Rejected")
+	// essentially checks the current state of the protocol
+	// and ensure that the the caller is holding the lock
+	if certauditor.CurrentState != Shuffle || certauditor.CurrentShuffler != -1 {
 		reply.Status = false
 		return nil
 	}
 
-	if certauditor.CurrentState > Shuffle {
-		fmt.Println("Ping Rejected")
-		reply.Status = true
-		return nil
-	}
-
-	fmt.Println("Ping Accepted")
-
+	fmt.Println("Client acquired the lock", req.ShufflerID)
 	data, err := ReadDatabase(certauditor)
-
 	if err != nil {
 		reply.Status = false
 		return nil
 	}
 
 	var database datastruct.Database
-
 	err = json.Unmarshal(data, &database)
-
-	if err != nil {
-		log.Fatalf("Error unmarshaling the JSON: %v", err)
-		reply.Status = false
-		return nil
-	}
-
-	client_info := database.Shuffle_PubKeys
-
-	for i := 0; i < int(certauditor.TotalClients); i++ {
-
-		start_part1 := time.Now()
-		client_ip := client_info[i].IP + ":80"
-		// connect to the client
-
-		client_connected := false
-		var client *rpc.Client
-		for !client_connected {
-			client, err = rpc.Dial("tcp", client_ip)
-
-			if err == nil {
-				client_connected = true
-			} else {
-				log.Println(err)
-				fmt.Println("dialing client failed. retrying")
-			}
-		}
-
-		// read database
-		data, err := ReadDatabase(certauditor)
-
-		if err != nil {
-			reply.Status = false
-			panic(err)
-			return nil
-		}
-
-		var database datastruct.Database
-
-		err = json.Unmarshal(data, &database)
-
-		if err != nil {
-			log.Fatalf("Error unmarshaling the JSON: %v", err)
-			reply.Status = false
-			return nil
-		}
-
-		shuffle_request := datastruct.ShufflePhaseAuditorRequest{
-			Database: database,
-		}
-
-		var shuffle_reply datastruct.ShufflePhaseAuditorReply
-
-		shuffle_time_part1 := time.Since(start_part1).Seconds()
-		// call the client shuffle
-
-		client_took_call := false
-
-		for !client_took_call {
-			err = client.Call("Client.ClientShuffle", shuffle_request, &shuffle_reply)
-			if err == nil {
-				log.Println(err)
-				client_took_call = true
-			}
-		}
-
-		// fmt.Println(shuffle_reply)
-		start_part2 := time.Now()
-		// read the zkdatabase
-		zkdata, err := ReadZKDatabase(certauditor)
-		if err != nil {
-			reply.Status = false
-			panic(err)
-			return nil
-		}
-
-		var zkdatabase datastruct.ZKDatabase
-		err = json.Unmarshal(zkdata, &zkdatabase)
-		if err != nil {
-			log.Fatalf("Error unmarshaling the JSON: %v", err)
-			reply.Status = false
-			return nil
-		}
-
-		// verify the zk proof that the client provided
-		uploaded_zk := shuffle_reply.ZKProofs
-
-		// encryption check
-		// checks sG=rG+cH
-		proving_client := client_info[i].ID
-		pubkeys_client, err := LocatePublicKeyWithID(proving_client, database.Shuffle_PubKeys)
-		if err != nil {
-			log.Fatalf("%v", err)
-			reply.Status = false
-			return nil
-		}
-
-		z1s := uploaded_zk.EncryptionProof.Z1s
-		z2s := uploaded_zk.EncryptionProof.Z2s
-		z3s := uploaded_zk.EncryptionProof.Z3s
-
-		// fmt.Println(S_x)
-		for i := 0; i < len(z1s); i++ {
-			// first challenge
-			X_z1, err := elgamal.ECDH_bytes(uploaded_zk.EncryptionProof.X_originals[i], z1s[i])
-			if err != nil {
-				log.Fatalf("%v", err)
-				reply.Status = false
-				return nil
-			}
-
-			H_z2, err := elgamal.ECDH_bytes(pubkeys_client.H_i, z2s[i])
-			if err != nil {
-				log.Fatalf("%v", err)
-				reply.Status = false
-				return nil
-			}
-
-			first_challenge_left_hand, err := elgamal.Encrypt(X_z1, H_z2)
-			if err != nil {
-				log.Fatalf("%v", err)
-				reply.Status = false
-				return nil
-			}
-
-			X_prime_c, err := elgamal.ECDH_bytes(uploaded_zk.EncryptionProof.X_primes[i], uploaded_zk.EncryptionProof.Cs[i])
-			if err != nil {
-				log.Fatalf("%v", err)
-				reply.Status = false
-				return nil
-			}
-			first_challenge_right_hand, err := elgamal.Encrypt(X_prime_c, uploaded_zk.EncryptionProof.I1s[i])
-			if err != nil {
-				log.Fatalf("%v", err)
-				reply.Status = false
-				return nil
-			}
-
-			if !bytes.Equal(first_challenge_left_hand, first_challenge_right_hand) {
-				fmt.Println("First challenge failed for client", proving_client)
-				reply.Status = false
-				return nil
-			}
-			// else {
-			// 	fmt.Println("First challenge PASSED for client", proving_client.ID)
-			// }
-
-			// second challenge
-			Y_z1, err := elgamal.ECDH_bytes(uploaded_zk.EncryptionProof.Y_originals[i], z1s[i])
-			if err != nil {
-				log.Fatalf("%v", err)
-				reply.Status = false
-				return nil
-			}
-
-			H_z3, err := elgamal.ECDH_bytes(pubkeys_client.H_i, z3s[i])
-			if err != nil {
-				log.Fatalf("%v", err)
-				reply.Status = false
-				return nil
-			}
-
-			second_challenge_left_hand, err := elgamal.Encrypt(Y_z1, H_z3)
-			if err != nil {
-				log.Fatalf("%v", err)
-				reply.Status = false
-				return nil
-			}
-
-			Y_prime_c, err := elgamal.ECDH_bytes(uploaded_zk.EncryptionProof.Y_primes[i], uploaded_zk.EncryptionProof.Cs[i])
-			if err != nil {
-				log.Fatalf("%v", err)
-				reply.Status = false
-				return nil
-			}
-			second_challenge_right_hand, err := elgamal.Encrypt(Y_prime_c, uploaded_zk.EncryptionProof.I2s[i])
-			if err != nil {
-				log.Fatalf("%v", err)
-				reply.Status = false
-				return nil
-			}
-
-			if !bytes.Equal(second_challenge_left_hand, second_challenge_right_hand) {
-				fmt.Println("Second challenge failed for client", proving_client)
-				reply.Status = false
-				return nil
-			}
-			// else {
-			// 	fmt.Println("Second challenge PASSED for client", proving_client.ID)
-			// }
-
-		}
-
-		fmt.Println("ZK Proof for encryption is verified for client ", proving_client)
-		//********* shuffle check
-		n := len(uploaded_zk.ShuffleProof.EntriesAfterShuffle)
-		gs := uploaded_zk.ShuffleProof.RSA_subgroup_generators
-		N := new(big.Int).Mul(database.RSA_P, database.RSA_Q)
-		// first check
-		ts := uploaded_zk.ShuffleProof.ChallengesLambda
-		/// sum up fs and check if it is equal to sum of ts
-		sum := big.NewInt(0)
-
-		fs := uploaded_zk.ShuffleProof.Fs
-		small_z := uploaded_zk.ShuffleProof.SmallZ
-		Z_ks := uploaded_zk.ShuffleProof.Z_ks
-		Z_prime := uploaded_zk.ShuffleProof.Z_prime
-		for _, f := range fs {
-			sum.Add(sum, f)
-		}
-		sum_ts := big.NewInt(0)
-		for _, t := range ts {
-			sum_ts.Add(sum_ts, zklib.SetBigIntWithBytes(t))
-		}
-		// fmt.Println("Sum of fs:", sum)
-		// fmt.Println("Sum of ts:", sum_ts)
-		if sum.Cmp(sum_ts) == 0 {
-			// fmt.Println("First Test PASSED!!!!!!!!!Sum of fs is equal to sum of ts")
-		} else {
-			fmt.Println("Sum of fs is not equal to sum of ts")
-			reply.Status = false
-			return nil
-		}
-
-		// second check
-		// calculate f_delta
-		f_delta := big.NewInt(0)
-		// sum of f squared
-		for _, f := range fs {
-			f_delta.Add(f_delta, new(big.Int).Mul(f, f))
-		}
-		// minus sum of ts squared
-		for _, t := range ts {
-			f_delta.Sub(f_delta, new(big.Int).Mul(zklib.SetBigIntWithBytes(t), zklib.SetBigIntWithBytes(t)))
-		}
-
-		/// conducting second check
-		second_condition_right_hand_side := zklib.Generate_commitment(gs, fs, f_delta, small_z.Bytes(), N)
-		// fmt.Print("second_condition_right_hand_side ")
-		// fmt.Println(second_condition_right_hand_side)
-		second_condition_left_hand_side := new(big.Int).Set(uploaded_zk.ShuffleProof.Commitments[n])
-		for i := 0; i < n; i++ {
-			second_condition_left_hand_side = new(big.Int).Mul(second_condition_left_hand_side, new(big.Int).Exp(uploaded_zk.ShuffleProof.Commitments[i], zklib.SetBigIntWithBytes(ts[i]), N))
-		}
-		second_condition_left_hand_side = new(big.Int).Mod(second_condition_left_hand_side, N)
-
-		// fmt.Print("second_condition_left_hand_side ")
-		// fmt.Println(second_condition_left_hand_side)
-		// compare the two sides
-		if second_condition_left_hand_side.Cmp(second_condition_right_hand_side) == 0 {
-			// fmt.Println("Second Test PASSED!!!!!!!!!")
-		} else {
-			fmt.Println("Second Test failed. they are not equal! Failed???????")
-			reply.Status = false
-			return nil
-		}
-
-		// third check for the entries **** hardest part brutal
-		// k means the index for individual pieces of the entry
-		for k := 0; k < len(uploaded_zk.ShuffleProof.EntriesAfterShuffle[0]); k++ {
-			third_check_left_hand_side := elgamal.ReturnInfinityPoint()
-			for i := 0; i < n; i++ {
-				C_i := uploaded_zk.ShuffleProof.EntriesAfterShuffle[i][k]
-				C_i_f_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(C_i, fs[i].Bytes())
-				if err != nil {
-					panic(err)
-				}
-				// check if fs[i] is negative
-				if fs[i].Cmp(big.NewInt(0)) < 0 {
-					// fmt.Println("detected negative fs[i]")
-					C_i_f_i, err = elgamal.ReturnNegative(C_i_f_i)
-					if err != nil {
-						panic(err)
-					}
-				}
-				third_check_left_hand_side, err = elgamal.Encrypt(third_check_left_hand_side, C_i_f_i)
-				if err != nil {
-					panic(err)
-				}
-			}
-
-			third_check_right_hand_side := uploaded_zk.ShuffleProof.Big_Vs[k]
-			for i := 0; i < n; i++ {
-				c_i := uploaded_zk.ShuffleProof.EntriesBeforeShuffle[i][k]
-				c_i_lambda_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(c_i, ts[i])
-				if err != nil {
-					panic(err)
-				}
-				third_check_right_hand_side, err = elgamal.Encrypt(third_check_right_hand_side, c_i_lambda_i)
-			}
-			// find the public key of the shuffler
-			for i := 0; i < len(uploaded_zk.ShuffleProof.Updated_Shufflers_info); i++ {
-				updated_shufflers := uploaded_zk.ShuffleProof.Updated_Shufflers_info[i]
-				shuffler_keys, err := LocatePublicKeyWithID(updated_shufflers.ID, database.Shuffle_PubKeys)
-				if err != nil {
-					panic(err)
-				}
-				encrypted_one_with_Z_k, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(shuffler_keys.H_i, Z_ks[i])
-				if err != nil {
-					panic(err)
-				}
-				third_check_right_hand_side, err = elgamal.Encrypt(third_check_right_hand_side, encrypted_one_with_Z_k)
-				if err != nil {
-					panic(err)
-				}
-			}
-
-			// compare the two sides
-			if !bytes.Equal(third_check_left_hand_side, third_check_right_hand_side) {
-				fmt.Println("Third Test FAILED????????", k)
-				reply.Status = false
-				return nil
-			}
-		}
-		// fmt.Println("Third Test concerning the cyphertext shuffling PASSED!!!!!!!!!")
-
-		// fourth check for tag X
-		fourth_condition_left_hand_side := elgamal.ReturnInfinityPoint()
-
-		for i := 0; i < n; i++ {
-			T_i_f_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(uploaded_zk.ShuffleProof.X_primes_encrypted_and_permutated_tagX[i], fs[i].Bytes())
-			if err != nil {
-				panic(err)
-			}
-			// check if fs[i] is negative
-			if fs[i].Cmp(big.NewInt(0)) < 0 {
-				// fmt.Println("detected negative fs[i]")
-				T_i_f_i, err = elgamal.ReturnNegative(T_i_f_i)
-				if err != nil {
-					panic(err)
-				}
-			}
-			fourth_condition_left_hand_side, err = elgamal.Encrypt(fourth_condition_left_hand_side, T_i_f_i)
-			if err != nil {
-				panic(err)
-			}
-		}
-		fourth_condition_right_hand_side := uploaded_zk.ShuffleProof.V_prime_X
-		// find the public key of the shuffler
-		shuffler_keys, err := LocatePublicKeyWithID(uploaded_zk.ShufflerID, database.Shuffle_PubKeys)
-
-		if err != nil {
-			panic(err)
-		}
-		encrypted_one_with_Z_prime, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(shuffler_keys.H_i, Z_prime.Bytes())
-		// fmt.Println(shuffler_keys.H_i)
-		if err != nil {
-			panic(err)
-		}
-		fourth_condition_right_hand_side, err = elgamal.Encrypt(fourth_condition_right_hand_side, encrypted_one_with_Z_prime)
-		if err != nil {
-			panic(err)
-		}
-		lambdas := ts
-		tags_before_shuffle := uploaded_zk.EncryptionProof.X_primes
-		for i := 0; i < n; i++ {
-			small_c_i_lambda_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(tags_before_shuffle[i], lambdas[i])
-			if err != nil {
-				panic(err)
-			}
-			fourth_condition_right_hand_side, err = elgamal.Encrypt(fourth_condition_right_hand_side, small_c_i_lambda_i)
-			if err != nil {
-				panic(err)
-			}
-		}
-		// compare the two sides
-		if bytes.Equal(fourth_condition_left_hand_side, fourth_condition_right_hand_side) {
-			// fmt.Println("Fourth Test PASSED!!!!!!!!!")
-		} else {
-			fmt.Println("Fourth Test FAILED????????")
-			reply.Status = false
-			return nil
-		}
-
-		// fitfh check for tag Y
-		fifth_condition_left_hand_side := elgamal.ReturnInfinityPoint()
-		// if err != nil {
-		// 	panic(err)
-		// }
-		for i := 0; i < n; i++ {
-			T_i_f_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(uploaded_zk.ShuffleProof.Y_primes_encrypted_and_permutated_tagY[i], fs[i].Bytes())
-			if err != nil {
-				panic(err)
-			}
-			// check if fs[i] is negative
-			if fs[i].Cmp(big.NewInt(0)) < 0 {
-				// fmt.Println("detected negative fs[i]")
-				T_i_f_i, err = elgamal.ReturnNegative(T_i_f_i)
-				if err != nil {
-					panic(err)
-				}
-			}
-			fifth_condition_left_hand_side, err = elgamal.Encrypt(fifth_condition_left_hand_side, T_i_f_i)
-			if err != nil {
-				panic(err)
-			}
-		}
-		fifth_condition_right_hand_side := uploaded_zk.ShuffleProof.V_prime_Y
-
-		fifth_condition_right_hand_side, err = elgamal.Encrypt(fifth_condition_right_hand_side, encrypted_one_with_Z_prime)
-		if err != nil {
-			panic(err)
-		}
-		// lambdas := ts
-		tags_before_shuffle_Y := uploaded_zk.EncryptionProof.Y_primes
-		for i := 0; i < n; i++ {
-			small_C_i_lambda_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(tags_before_shuffle_Y[i], lambdas[i])
-			if err != nil {
-				panic(err)
-			}
-			fifth_condition_right_hand_side, err = elgamal.Encrypt(fifth_condition_right_hand_side, small_C_i_lambda_i)
-			if err != nil {
-				panic(err)
-			}
-		}
-		// compare the two sides
-		if bytes.Equal(fifth_condition_left_hand_side, fifth_condition_right_hand_side) {
-			// fmt.Println("Fifth Test PASSED!!!!!!!!!")
-		} else {
-			fmt.Println("Fifth Test FAILED????????")
-			reply.Status = false
-			return nil
-		}
-		// decryption check
-
-		// need to perform a check to ensure that zk proof checks out
-
-		zkdatabase.ZK_info = append(zkdatabase.ZK_info, &uploaded_zk)
-
-		database = shuffle_reply.Database
-
-		WriteRevealInfoToDatabase(certauditor, &database)
-
-		// write the zkdatabase
-
-		WriteZKInfoToZKDatabase(certauditor, &zkdatabase)
-
-		if len(database.Shufflers_info) == int(certauditor.TotalClients) {
-			certauditor.CurrentState = Reveal
-		}
-
-		shuffle_time_part2 := time.Since(start_part2).Seconds()
-
-		certauditor.PerClientCPU[proving_client].ShuffleTime = shuffle_time_part1 + shuffle_time_part2
-
-		fmt.Println("client shuffled successfully", proving_client)
-		client.Close()
-	}
+	// exists := database.Shufflers_info[req.ShufflerID]
+	// if exists {
+	// 	reply.Status = false
+	// 	return nil
+	// }
+	reply.Database = database
+	certauditor.CurrentShuffler = req.ShufflerID
 	reply.Status = true
-	fmt.Println("Shuffling done")
-	if certauditor.CurrentState == Reveal {
-		fmt.Println("State changed to Reveal")
-	} else {
-		panic("State not changed to Reveal, bad")
-	}
 	return nil
-
 }
 
 func LocatePublicKeyWithID(clientID int, ShufflerPublicKeys []*datastruct.ShufflePubKeys) (*datastruct.ShufflePubKeys, error) {
@@ -903,11 +427,421 @@ func LocatePublicKeyWithID(clientID int, ShufflerPublicKeys []*datastruct.Shuffl
 	return nil, errors.New("Shuffler Public Key Not Found")
 }
 
+// / client shuffle services
+func (certauditor *CTLogCheckerAuditor) ShufflePhasePerformShuffleResult(req *datastruct.ShufflePhasePerformShuffleResultRequest, reply *datastruct.ShufflePhasePerformShuffleResultReply) error {
+	certauditor.mu.Lock()
+	defer certauditor.mu.Unlock()
+
+	// essentially checks the current state of the protocol
+	// and ensure that the the caller is holding the lock
+	if certauditor.CurrentState != Shuffle {
+		reply.Status = false
+		return nil
+	}
+
+	if certauditor.CurrentShuffler != req.ShufflerID {
+		reply.Status = false
+		return nil
+	}
+
+	data, err := ReadDatabase(certauditor)
+	if err != nil {
+		reply.Status = false
+		return nil
+	}
+
+	var database datastruct.Database
+	err = json.Unmarshal(data, &database)
+	if err != nil {
+		log.Fatalf("Error unmarshaling the JSON: %v", err)
+		reply.Status = false
+		return nil
+	}
+
+	// read the zkdatabase
+	zkdata, err := ReadZKDatabase(certauditor)
+	if err != nil {
+		reply.Status = false
+		return nil
+	}
+
+	var zkdatabase datastruct.ZKDatabase
+	err = json.Unmarshal(zkdata, &zkdatabase)
+	if err != nil {
+		log.Fatalf("Error unmarshaling the JSON: %v", err)
+		reply.Status = false
+		return nil
+	}
+
+	// verify the zk proof that the client provided
+	uploaded_zk := req.ZKProofs
+
+	// encryption check
+	// checks sG=rG+cH
+	proving_client := req.ShufflerID
+	pubkeys_client, err := LocatePublicKeyWithID(proving_client, database.Shuffle_PubKeys)
+	if err != nil {
+		log.Fatalf("%v", err)
+		reply.Status = false
+		return nil
+	}
+
+	z1s := uploaded_zk.EncryptionProof.Z1s
+	z2s := uploaded_zk.EncryptionProof.Z2s
+	z3s := uploaded_zk.EncryptionProof.Z3s
+
+	// fmt.Println(S_x)
+	for i := 0; i < len(z1s); i++ {
+		// first challenge
+		X_z1, err := elgamal.ECDH_bytes(uploaded_zk.EncryptionProof.X_originals[i], z1s[i])
+		if err != nil {
+			log.Fatalf("%v", err)
+			reply.Status = false
+			return nil
+		}
+
+		H_z2, err := elgamal.ECDH_bytes(pubkeys_client.H_i, z2s[i])
+		if err != nil {
+			log.Fatalf("%v", err)
+			reply.Status = false
+			return nil
+		}
+
+		first_challenge_left_hand, err := elgamal.Encrypt(X_z1, H_z2)
+		if err != nil {
+			log.Fatalf("%v", err)
+			reply.Status = false
+			return nil
+		}
+
+		X_prime_c, err := elgamal.ECDH_bytes(uploaded_zk.EncryptionProof.X_primes[i], uploaded_zk.EncryptionProof.Cs[i])
+		if err != nil {
+			log.Fatalf("%v", err)
+			reply.Status = false
+			return nil
+		}
+		first_challenge_right_hand, err := elgamal.Encrypt(X_prime_c, uploaded_zk.EncryptionProof.I1s[i])
+		if err != nil {
+			log.Fatalf("%v", err)
+			reply.Status = false
+			return nil
+		}
+
+		if !bytes.Equal(first_challenge_left_hand, first_challenge_right_hand) {
+			fmt.Println("First challenge failed for client", proving_client)
+			reply.Status = false
+			return nil
+		}
+		// else {
+		// 	fmt.Println("First challenge PASSED for client", proving_client.ID)
+		// }
+
+		// second challenge
+		Y_z1, err := elgamal.ECDH_bytes(uploaded_zk.EncryptionProof.Y_originals[i], z1s[i])
+		if err != nil {
+			log.Fatalf("%v", err)
+			reply.Status = false
+			return nil
+		}
+
+		H_z3, err := elgamal.ECDH_bytes(pubkeys_client.H_i, z3s[i])
+		if err != nil {
+			log.Fatalf("%v", err)
+			reply.Status = false
+			return nil
+		}
+
+		second_challenge_left_hand, err := elgamal.Encrypt(Y_z1, H_z3)
+		if err != nil {
+			log.Fatalf("%v", err)
+			reply.Status = false
+			return nil
+		}
+
+		Y_prime_c, err := elgamal.ECDH_bytes(uploaded_zk.EncryptionProof.Y_primes[i], uploaded_zk.EncryptionProof.Cs[i])
+		if err != nil {
+			log.Fatalf("%v", err)
+			reply.Status = false
+			return nil
+		}
+		second_challenge_right_hand, err := elgamal.Encrypt(Y_prime_c, uploaded_zk.EncryptionProof.I2s[i])
+		if err != nil {
+			log.Fatalf("%v", err)
+			reply.Status = false
+			return nil
+		}
+
+		if !bytes.Equal(second_challenge_left_hand, second_challenge_right_hand) {
+			fmt.Println("Second challenge failed for client", proving_client)
+			reply.Status = false
+			return nil
+		}
+		// else {
+		// 	fmt.Println("Second challenge PASSED for client", proving_client.ID)
+		// }
+
+	}
+
+	fmt.Println("ZK Proof for encryption is verified for client ", proving_client)
+	//********* shuffle check
+	n := len(uploaded_zk.ShuffleProof.EntriesAfterShuffle)
+	gs := uploaded_zk.ShuffleProof.RSA_subgroup_generators
+	N := new(big.Int).Mul(database.RSA_P, database.RSA_Q)
+	// first check
+	ts := uploaded_zk.ShuffleProof.ChallengesLambda
+	/// sum up fs and check if it is equal to sum of ts
+	sum := big.NewInt(0)
+
+	fs := uploaded_zk.ShuffleProof.Fs
+	small_z := uploaded_zk.ShuffleProof.SmallZ
+	Z_ks := uploaded_zk.ShuffleProof.Z_ks
+	Z_prime := uploaded_zk.ShuffleProof.Z_prime
+	for _, f := range fs {
+		sum.Add(sum, f)
+	}
+	sum_ts := big.NewInt(0)
+	for _, t := range ts {
+		sum_ts.Add(sum_ts, zklib.SetBigIntWithBytes(t))
+	}
+	// fmt.Println("Sum of fs:", sum)
+	// fmt.Println("Sum of ts:", sum_ts)
+	if sum.Cmp(sum_ts) == 0 {
+		fmt.Println("First Test PASSED!!!!!!!!!Sum of fs is equal to sum of ts")
+	} else {
+		fmt.Println("Sum of fs is not equal to sum of ts")
+		reply.Status = false
+		return nil
+	}
+
+	// second check
+	// calculate f_delta
+	f_delta := big.NewInt(0)
+	// sum of f squared
+	for _, f := range fs {
+		f_delta.Add(f_delta, new(big.Int).Mul(f, f))
+	}
+	// minus sum of ts squared
+	for _, t := range ts {
+		f_delta.Sub(f_delta, new(big.Int).Mul(zklib.SetBigIntWithBytes(t), zklib.SetBigIntWithBytes(t)))
+	}
+
+	/// conducting second check
+	second_condition_right_hand_side := zklib.Generate_commitment(gs, fs, f_delta, small_z.Bytes(), N)
+	// fmt.Print("second_condition_right_hand_side ")
+	// fmt.Println(second_condition_right_hand_side)
+	second_condition_left_hand_side := new(big.Int).Set(uploaded_zk.ShuffleProof.Commitments[n])
+	for i := 0; i < n; i++ {
+		second_condition_left_hand_side = new(big.Int).Mul(second_condition_left_hand_side, new(big.Int).Exp(uploaded_zk.ShuffleProof.Commitments[i], zklib.SetBigIntWithBytes(ts[i]), N))
+	}
+	second_condition_left_hand_side = new(big.Int).Mod(second_condition_left_hand_side, N)
+
+	// fmt.Print("second_condition_left_hand_side ")
+	// fmt.Println(second_condition_left_hand_side)
+	// compare the two sides
+	if second_condition_left_hand_side.Cmp(second_condition_right_hand_side) == 0 {
+		fmt.Println("Second Test PASSED!!!!!!!!!")
+	} else {
+		fmt.Println("they are not equal! Failed???????")
+		reply.Status = false
+		return nil
+	}
+
+	// third check for the entries **** hardest part brutal
+	// k means the index for individual pieces of the entry
+	for k := 0; k < len(uploaded_zk.ShuffleProof.EntriesAfterShuffle[0]); k++ {
+		third_check_left_hand_side := elgamal.ReturnInfinityPoint()
+		for i := 0; i < n; i++ {
+			C_i := uploaded_zk.ShuffleProof.EntriesAfterShuffle[i][k]
+			C_i_f_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(C_i, fs[i].Bytes())
+			if err != nil {
+				panic(err)
+			}
+			// check if fs[i] is negative
+			if fs[i].Cmp(big.NewInt(0)) < 0 {
+				// fmt.Println("detected negative fs[i]")
+				C_i_f_i, err = elgamal.ReturnNegative(C_i_f_i)
+				if err != nil {
+					panic(err)
+				}
+			}
+			third_check_left_hand_side, err = elgamal.Encrypt(third_check_left_hand_side, C_i_f_i)
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		third_check_right_hand_side := uploaded_zk.ShuffleProof.Big_Vs[k]
+		for i := 0; i < n; i++ {
+			c_i := uploaded_zk.ShuffleProof.EntriesBeforeShuffle[i][k]
+			c_i_lambda_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(c_i, ts[i])
+			if err != nil {
+				panic(err)
+			}
+			third_check_right_hand_side, err = elgamal.Encrypt(third_check_right_hand_side, c_i_lambda_i)
+		}
+		// find the public key of the shuffler
+		for i := 0; i < len(uploaded_zk.ShuffleProof.Updated_Shufflers_info); i++ {
+			updated_shufflers := uploaded_zk.ShuffleProof.Updated_Shufflers_info[i]
+			shuffler_keys, err := LocatePublicKeyWithID(updated_shufflers.ID, database.Shuffle_PubKeys)
+			if err != nil {
+				panic(err)
+			}
+			encrypted_one_with_Z_k, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(shuffler_keys.H_i, Z_ks[i])
+			if err != nil {
+				panic(err)
+			}
+			third_check_right_hand_side, err = elgamal.Encrypt(third_check_right_hand_side, encrypted_one_with_Z_k)
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		// compare the two sides
+		if !bytes.Equal(third_check_left_hand_side, third_check_right_hand_side) {
+			fmt.Println("Third Test FAILED????????", k)
+			reply.Status = false
+			return nil
+		}
+	}
+	fmt.Println("Third Test concerning the cyphertext shuffling PASSED!!!!!!!!!")
+
+	// fourth check for tag X
+	fourth_condition_left_hand_side := elgamal.ReturnInfinityPoint()
+
+	for i := 0; i < n; i++ {
+		T_i_f_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(uploaded_zk.ShuffleProof.X_primes_encrypted_and_permutated_tagX[i], fs[i].Bytes())
+		if err != nil {
+			panic(err)
+		}
+		// check if fs[i] is negative
+		if fs[i].Cmp(big.NewInt(0)) < 0 {
+			// fmt.Println("detected negative fs[i]")
+			T_i_f_i, err = elgamal.ReturnNegative(T_i_f_i)
+			if err != nil {
+				panic(err)
+			}
+		}
+		fourth_condition_left_hand_side, err = elgamal.Encrypt(fourth_condition_left_hand_side, T_i_f_i)
+		if err != nil {
+			panic(err)
+		}
+	}
+	fourth_condition_right_hand_side := uploaded_zk.ShuffleProof.V_prime_X
+	// find the public key of the shuffler
+	shuffler_keys, err := LocatePublicKeyWithID(uploaded_zk.ShufflerID, database.Shuffle_PubKeys)
+	fmt.Println("found this guys id ", uploaded_zk.ShufflerID)
+	if err != nil {
+		panic(err)
+	}
+	encrypted_one_with_Z_prime, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(shuffler_keys.H_i, Z_prime.Bytes())
+	// fmt.Println(shuffler_keys.H_i)
+	if err != nil {
+		panic(err)
+	}
+	fourth_condition_right_hand_side, err = elgamal.Encrypt(fourth_condition_right_hand_side, encrypted_one_with_Z_prime)
+	if err != nil {
+		panic(err)
+	}
+	lambdas := ts
+	tags_before_shuffle := uploaded_zk.EncryptionProof.X_primes
+	for i := 0; i < n; i++ {
+		small_c_i_lambda_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(tags_before_shuffle[i], lambdas[i])
+		if err != nil {
+			panic(err)
+		}
+		fourth_condition_right_hand_side, err = elgamal.Encrypt(fourth_condition_right_hand_side, small_c_i_lambda_i)
+		if err != nil {
+			panic(err)
+		}
+	}
+	// compare the two sides
+	if bytes.Equal(fourth_condition_left_hand_side, fourth_condition_right_hand_side) {
+		fmt.Println("Fourth Test PASSED!!!!!!!!!")
+	} else {
+		fmt.Println("Fourth Test FAILED????????")
+		reply.Status = false
+		return nil
+	}
+
+	// fitfh check for tag Y
+	fifth_condition_left_hand_side := elgamal.ReturnInfinityPoint()
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < n; i++ {
+		T_i_f_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(uploaded_zk.ShuffleProof.Y_primes_encrypted_and_permutated_tagY[i], fs[i].Bytes())
+		if err != nil {
+			panic(err)
+		}
+		// check if fs[i] is negative
+		if fs[i].Cmp(big.NewInt(0)) < 0 {
+			// fmt.Println("detected negative fs[i]")
+			T_i_f_i, err = elgamal.ReturnNegative(T_i_f_i)
+			if err != nil {
+				panic(err)
+			}
+		}
+		fifth_condition_left_hand_side, err = elgamal.Encrypt(fifth_condition_left_hand_side, T_i_f_i)
+		if err != nil {
+			panic(err)
+		}
+	}
+	fifth_condition_right_hand_side := uploaded_zk.ShuffleProof.V_prime_Y
+
+	fifth_condition_right_hand_side, err = elgamal.Encrypt(fifth_condition_right_hand_side, encrypted_one_with_Z_prime)
+	if err != nil {
+		panic(err)
+	}
+	// lambdas := ts
+	tags_before_shuffle_Y := uploaded_zk.EncryptionProof.Y_primes
+	for i := 0; i < n; i++ {
+		small_C_i_lambda_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(tags_before_shuffle_Y[i], lambdas[i])
+		if err != nil {
+			panic(err)
+		}
+		fifth_condition_right_hand_side, err = elgamal.Encrypt(fifth_condition_right_hand_side, small_C_i_lambda_i)
+		if err != nil {
+			panic(err)
+		}
+	}
+	// compare the two sides
+	if bytes.Equal(fifth_condition_left_hand_side, fifth_condition_right_hand_side) {
+		fmt.Println("Fifth Test PASSED!!!!!!!!!")
+	} else {
+		fmt.Println("Fifth Test FAILED????????")
+		reply.Status = false
+		return nil
+	}
+	// decryption check
+
+	// need to perform a check to ensure that zk proof checks out
+
+	zkdatabase.ZK_info = append(zkdatabase.ZK_info, &uploaded_zk)
+
+	database = req.Database
+
+	WriteRevealInfoToDatabase(certauditor, &database)
+
+	// write the zkdatabase
+
+	WriteZKInfoToZKDatabase(certauditor, &zkdatabase)
+
+	if len(database.Shufflers_info) == int(certauditor.TotalClients) {
+		certauditor.CurrentState = Reveal
+	}
+
+	// unhold the lock
+	fmt.Println("client released the lock", proving_client)
+	certauditor.CurrentShuffler = -1
+	reply.Status = true
+	fmt.Println("client shuffled successfully", proving_client)
+	return nil
+}
+
 func (certauditor *CTLogCheckerAuditor) RevealPhaseClientAcquireDatabase(req *datastruct.RevealPhaseAcquireDatabaseRequest, reply *datastruct.RevealPhaseAcquireDatabaseReply) error {
 	certauditor.mu.Lock()
 	defer certauditor.mu.Unlock()
 
-	start := time.Now()
 	// essentially checks the current state of the protocol
 	// and ensure that the the caller is holding the lock
 	if certauditor.CurrentState != Reveal {
@@ -929,14 +863,52 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientAcquireDatabase(req *da
 		return nil
 	}
 
+	// read ZK database
+	zkdata, err := ReadZKDatabase(certauditor)
+	if err != nil {
+		reply.Status = false
+		return nil
+	}
+
+	var zkdatabase datastruct.ZKDatabase
+	err = json.Unmarshal(zkdata, &zkdatabase)
+	if err != nil {
+		log.Fatalf("Error unmarshaling the JSON: %v", err)
+		reply.Status = false
+		return nil
+	}
+
+	// trim the zk database
+	// trim zk such that the auditor only transmit what is necessary
+
+	order, err := LocateShuffleOrderWithID(req.ShufflerID, database.Shufflers_info)
+
+	if err != nil {
+		reply.Status = false
+		return nil
+	}
+
+	for i := 0; i < order; i++ {
+		if i != order-1 {
+			zkdatabase.ZK_info[i].ShuffleProof.EntriesAfterShuffle = nil
+		}
+	}
+
+	zkdatabase.ZK_info = zkdatabase.ZK_info[:order]
+
+	reply.ZK_info = zkdatabase.ZK_info
 	reply.Database = database
 	reply.Status = true
-
-	elapsed := time.Since(start)
-	reveal_acquire_database_time_seconds := elapsed.Seconds()
-
-	certauditor.PerClientCPU[req.ShufflerID].RevealTime += reveal_acquire_database_time_seconds
 	return nil
+}
+
+func LocateShuffleOrderWithID(clientID int, Shufflers []*datastruct.ShuffleRecords) (int, error) {
+	for i := 0; i < len(Shufflers); i++ {
+		if clientID == Shufflers[i].ID {
+			return i, nil
+		}
+	}
+	return -1, errors.New("Shuffle order not found")
 }
 
 func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datastruct.RevealPhaseReportRevealRequest, reply *datastruct.RevealPhaseReportRevealReply) error {
@@ -948,7 +920,6 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datas
 		return nil
 	}
 
-	start := time.Now()
 	// potentially more checks
 	// read database
 	data, err := ReadDatabase(certauditor)
@@ -968,27 +939,18 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datas
 	database.Decrypt_info = append(database.Decrypt_info, &req.RevealRecords)
 	WriteRevealInfoToDatabase(certauditor, &database)
 
-	reveal_time_seconds := time.Since(start).Seconds()
-	certauditor.PerClientCPU[req.ShufflerID].RevealTime += reveal_time_seconds
-
 	if len(database.Decrypt_info) == int(certauditor.TotalClients-certauditor.MaxSitOut) {
 		if certauditor.MaxSitOut > 0 {
 			certauditor.CurrentState = FaultTolerance
 		} else {
 			certauditor.CurrentState = Completed
 			/// calculate the entries
-
-			reveal_calculation_start := time.Now()
 			result := CalculateEntries(certauditor)
-
-			reveal_calculation_time := time.Since(reveal_calculation_start).Seconds()
-
-			total_time := time.Since(certauditor.StartTime).Seconds()
-
-			for i := 0; i < int(certauditor.TotalClients); i++ {
-				certauditor.PerClientCPU[i].RevealTime += reveal_calculation_time / float64(certauditor.TotalClients)
+			// fmt.Println(result)
+			for j := 0; j < len(result); j++ {
+				extracted_cert, _ := ExtractData(result[j])
+				fmt.Println(extracted_cert)
 			}
-
 			certauditor.CalculatedEntries = result
 			// report to the collector
 			collector_interface, err := rpc.DialHTTP("tcp", certauditor.CollectorAddress)
@@ -1003,8 +965,6 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datas
 			report_stats_req.CalculatedEntries = certauditor.CalculatedEntries
 			report_stats_req.TotalClients = certauditor.TotalClients
 			report_stats_req.MaxSitOut = certauditor.MaxSitOut
-			report_stats_req.TotalRunTime = total_time
-			report_stats_req.PerClientCPU = certauditor.PerClientCPU
 			status_reported := false
 
 			for !status_reported {
@@ -1020,6 +980,7 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datas
 
 	}
 	reply.Status = true
+
 	return nil
 }
 
@@ -1029,9 +990,6 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseAcquireDatabase(req *
 
 	// essentially checks the current state of the protocol
 	// and ensure that the the caller is holding the lock
-
-	start := time.Now()
-
 	if certauditor.CurrentState == Completed {
 		reply.Status = true
 		reply.FTNeeded = false
@@ -1076,10 +1034,6 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseAcquireDatabase(req *
 	reply.AbsentClients = clients
 	// fmt.Println(clients)
 
-	elapsed := time.Since(start).Seconds()
-
-	certauditor.PerClientCPU[req.ShufflerID].FaultToleranceTime += elapsed
-
 	return nil
 }
 
@@ -1114,8 +1068,6 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseReportResult(req *dat
 		return nil
 	}
 
-	start := time.Now()
-
 	data, err := ReadDatabase(certauditor)
 	if err != nil {
 		reply.Status = false
@@ -1135,18 +1087,11 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseReportResult(req *dat
 	reply.Status = true
 	WriteRevealInfoToDatabase(certauditor, &database)
 
-	ft_time := time.Since(start).Seconds()
-
-	certauditor.PerClientCPU[req.ShufflerID].FaultToleranceTime += ft_time
-
 	if len(database.FT_Info) == int(certauditor.TotalClients-certauditor.MaxSitOut) {
 		certauditor.CurrentState = Completed
 		/// calculate the entries
 
-		reveal_calculation_start := time.Now()
-
 		result := CalculateEntries(certauditor)
-
 		// fmt.Println(result)
 		if certauditor.MaxSitOut > 0 {
 			// fault tolerance kick in
@@ -1166,16 +1111,10 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseReportResult(req *dat
 				}
 			}
 		}
-		reveal_calculation_time := time.Since(reveal_calculation_start).Seconds()
-
-		for i := 0; i < int(certauditor.TotalClients); i++ {
-			certauditor.PerClientCPU[i].RevealTime += reveal_calculation_time / float64(certauditor.TotalClients)
+		for j := 0; j < len(result); j++ {
+			extracted_cert, _ := ExtractData(result[j])
+			fmt.Println(extracted_cert)
 		}
-		// for j := 0; j < len(result); j++ {
-		// 	extracted_cert, _ := ExtractData(result[j])
-		// 	fmt.Println(extracted_cert)
-		// }
-		total_time := time.Since(certauditor.StartTime).Seconds()
 		certauditor.CalculatedEntries = result
 
 		// report to the collector
@@ -1191,9 +1130,6 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseReportResult(req *dat
 		report_stats_req.CalculatedEntries = certauditor.CalculatedEntries
 		report_stats_req.TotalClients = certauditor.TotalClients
 		report_stats_req.MaxSitOut = certauditor.MaxSitOut
-		report_stats_req.TotalRunTime = total_time
-		report_stats_req.PerClientCPU = certauditor.PerClientCPU
-
 		status_reported := false
 
 		for !status_reported {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"CTLogchecker/AuditorApp/datastruct"
 	"CTLogchecker/AuditorApp/services"
 	"fmt"
 	"log"
@@ -72,11 +71,6 @@ func main() {
 	CTLogAuditor.Shamir_curve = curves.P256()
 	CTLogAuditor.CurrentFaultToleranceCount = 0
 
-	// initialize PerClientCPU
-	CTLogAuditor.PerClientCPU = []datastruct.AuditorClientCPUReport{}
-	for i := 0; i < numClients; i++ {
-		CTLogAuditor.PerClientCPU = append(CTLogAuditor.PerClientCPU, datastruct.AuditorClientCPUReport{ID: i})
-	}
 	err = services.InitializeDatabase(CTLogAuditor)
 	if err != nil {
 		log.Fatal("Error initializing database:", err)
