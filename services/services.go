@@ -1247,7 +1247,7 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseReportResult(req *dat
 // extract the certificate out of these points
 func ExtractData(segments [][]byte) ([]byte, error) {
 	if len(segments) == 1 {
-		return segments[0][1:], nil
+		return segments[0], nil
 	}
 
 	if len(segments) != 9 {
