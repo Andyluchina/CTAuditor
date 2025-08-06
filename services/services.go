@@ -724,7 +724,7 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 				if err != nil {
 					panic(err)
 				}
-				third_check_right_hand_side, err = elgamal.Encrypt(third_check_right_hand_side, c_i_lambda_i)
+				third_check_right_hand_side, _ = elgamal.Encrypt(third_check_right_hand_side, c_i_lambda_i)
 			}
 			// find the public key of the shuffler
 			for i := 0; i < len(uploaded_zk.ShuffleProof.Updated_Shufflers_info); i++ {
@@ -1246,6 +1246,10 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseReportResult(req *dat
 
 // extract the certificate out of these points
 func ExtractData(segments [][]byte) ([]byte, error) {
+	if len(segments) == 1 {
+		return segments[0], nil
+	}
+
 	if len(segments) != 9 {
 		return nil, errors.New("there must be exactly 9 segments")
 	}
