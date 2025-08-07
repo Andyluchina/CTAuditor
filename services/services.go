@@ -1147,7 +1147,7 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datas
 
 			report_stats_req.CalculatedEntries = certauditor.CalculatedEntries
 			report_stats_req.TotalClients = certauditor.TotalClients
-			report_stats_req.MaxSitOut = certauditor.TotalShuffers
+			report_stats_req.MaxSitOut = certauditor.MaxSitOut
 			report_stats_req.TotalRunTime = total_time
 			report_stats_req.PerClientCPU = certauditor.PerClientCPU
 			report_stats_req.Shufflers = certauditor.TotalShuffers
