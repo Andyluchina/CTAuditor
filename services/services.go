@@ -1016,6 +1016,9 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 	}
 	reply.Status = true
 	fmt.Println("Shuffling done")
+	if shuffles_done == certauditor.TotalShuffers {
+		certauditor.CurrentState = Reveal
+	}
 	if certauditor.CurrentState == Reveal {
 		fmt.Println("State changed to Reveal")
 	} else {
