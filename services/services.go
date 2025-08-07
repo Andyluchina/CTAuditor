@@ -260,7 +260,7 @@ func (certauditor *CTLogCheckerAuditor) RegisterClient(request *datastruct.Regis
 	}
 
 	database.Shuffle_PubKeys = append(database.Shuffle_PubKeys, client_info)
-	fmt.Println("Client registered successfully ", certauditor.CurrentClientCount)
+	fmt.Println("Client registered successfully ", client_info.ID, client_info.IP)
 
 	// update the current client count, and advance the state if all clients have registered
 	certauditor.CurrentClientCount++
