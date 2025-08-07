@@ -979,7 +979,7 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 
 		WriteZKInfoToZKDatabase(certauditor, &zkdatabase)
 
-		if len(database.Shufflers_info) == int(certauditor.TotalClients) {
+		if certauditor.TotalShuffers == shuffles_done {
 			certauditor.CurrentState = Reveal
 			// read ZK database
 			zkdata, err := ReadZKDatabase(certauditor)
