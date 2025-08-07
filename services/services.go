@@ -1135,7 +1135,7 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datas
 			collector_interface, err := rpc.DialHTTP("tcp", certauditor.CollectorAddress)
 
 			if err != nil {
-				log.Fatal("dialing:", err)
+				log.Fatal("dialing collector1:", err)
 			}
 
 			var report_stats_reply datastruct.ReportStatsReply
@@ -1146,6 +1146,7 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datas
 			report_stats_req.MaxSitOut = certauditor.MaxSitOut
 			report_stats_req.TotalRunTime = total_time
 			report_stats_req.PerClientCPU = certauditor.PerClientCPU
+			report_stats_req.Shufflers = uint32(certauditor.TotalShuffers)
 			status_reported := false
 
 			for !status_reported {
@@ -1323,7 +1324,7 @@ func (certauditor *CTLogCheckerAuditor) FaultTolerancePhaseReportResult(req *dat
 		collector_interface, err := rpc.DialHTTP("tcp", certauditor.CollectorAddress)
 
 		if err != nil {
-			log.Fatal("dialing:", err)
+			log.Fatal("dialing collector2:", err)
 		}
 
 		var report_stats_reply datastruct.ReportStatsReply
