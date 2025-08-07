@@ -6,6 +6,7 @@ import (
 	"CTLogchecker/AuditorApp/safeprime"
 	"CTLogchecker/AuditorApp/zklib"
 	"bytes"
+	"crypto/ecdh"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,8 @@ import (
 // client fault tolerance report
 
 type CTLogCheckerAuditor struct {
+	TotalShuffers   int
+	Curve           ecdh.Curve
 	ShuffleDatabase string
 	ZKDatabase      string
 	TotalClients    uint32
@@ -330,7 +333,88 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 		}
 	}
 
-	database.Entries = append(database.Entries, &req.InitialEntry)
+	client_count := int(certauditor.TotalClients)
+	registration_order := len(database.Entries)
+	// fill shufflers with point of zero
+	entry := &req.InitialEntry
+	for i := 0; i < client_count; i++ {
+		entry.Shufflers = append(entry.Shufflers, elgamal.ReturnInfinityPoint())
+	}
+
+	// find client's shuffling public key
+	init_client_pubkey, err := database.Shuffle_PubKeys[registration_order], nil
+
+	if err != nil {
+		return err
+	}
+
+	// encrypt all other entries under this public key
+	for i := 0; i < registration_order; i++ {
+		r_i_prime := elgamal.Generate_Random_Dice_seed(certauditor.Curve)
+		h_r_i_prime, err := elgamal.ECDH_bytes(init_client_pubkey.H_i, r_i_prime)
+		if err != nil {
+			return err
+		}
+
+		g_r_i_prime, err := elgamal.ECDH_bytes(init_client_pubkey.G_i, r_i_prime)
+		if err != nil {
+			log.Fatalf("%v", err)
+			return err
+		}
+
+		database.Entries[i].Cert_times_h_r10, err = EncryptSegments(h_r_i_prime, database.Entries[i].Cert_times_h_r10)
+		if err != nil {
+			return err
+		}
+
+		// updating shuffler info
+		// entry.Shufflers[i], err = elgamal.Encrypt(entry.Shufflers[i], g_r_i_prime)
+		// if err != nil {
+		// 	return err
+		// }
+
+		// // update the shuffler info, this is where I am shuffling everyone else
+		database.Entries[i].Shufflers[registration_order], err = elgamal.Encrypt(database.Entries[i].Shufflers[registration_order], g_r_i_prime)
+		if err != nil {
+			return err
+		}
+	}
+
+	// encrypt this one entry under all other public keys
+	shuffle_pubkeys := database.Shuffle_PubKeys
+	for i := 0; i < registration_order; i++ {
+		r_i_prime := elgamal.Generate_Random_Dice_seed(certauditor.Curve)
+		h_r_i_prime, err := elgamal.ECDH_bytes(shuffle_pubkeys[i].H_i, r_i_prime)
+		if err != nil {
+			return err
+		}
+
+		g_r_i_prime, err := elgamal.ECDH_bytes(shuffle_pubkeys[i].G_i, r_i_prime)
+		if err != nil {
+			log.Fatalf("%v", err)
+			return err
+		}
+
+		/// changing the msg entry
+		entry.Cert_times_h_r10, err = EncryptSegments(h_r_i_prime, entry.Cert_times_h_r10)
+		if err != nil {
+			return err
+		}
+
+		// // updating shuffler info
+		entry.Shufflers[i], err = elgamal.Encrypt(entry.Shufflers[i], g_r_i_prime)
+		if err != nil {
+			return err
+		}
+
+		// update the shuffler info, this is where I am shuffling everyone else
+		// database.Entries[i].Shufflers[registration_order], err = elgamal.Encrypt(database.Entries[i].Shufflers[registration_order], g_r_i_prime)
+		// if err != nil {
+		// 	return err
+		// }
+	}
+
+	database.Entries = append(database.Entries, entry)
 
 	certauditor.CurrentInitialReporter = req.ShufflerID
 	fmt.Println("Client reported successfully ", certauditor.CurrentInitialReporter)
@@ -444,9 +528,8 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 	}
 
 	client_info := database.Shuffle_PubKeys
-
+	shuffles_done := 0
 	for i := 0; i < int(certauditor.TotalClients); i++ {
-
 		start_part1 := time.Now()
 		client_ip := client_info[i].IP + ":80"
 		// connect to the client
@@ -483,7 +566,30 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 			return nil
 		}
 
+		if shuffles_done >= certauditor.TotalShuffers {
+			shuffle_request := datastruct.ShufflePhaseAuditorRequest{
+				Status:   0, // 1 means shuffle, 0 means jump to reveal
+				Database: database,
+			}
+			var shuffle_reply datastruct.ShufflePhaseAuditorReply
+			client_took_call := false
+
+			for !client_took_call {
+				err = client.Call("Client.ClientShuffle", shuffle_request, &shuffle_reply)
+				if err == nil {
+					log.Println(err)
+					client_took_call = true
+				}
+			}
+			proving_client := client_info[i].ID
+			certauditor.PerClientCPU[proving_client].ShuffleTime = 0
+			fmt.Println("client shuffled successfully", proving_client)
+			client.Close()
+
+		}
+
 		shuffle_request := datastruct.ShufflePhaseAuditorRequest{
+			Status:   1, // 1 means shuffle, 0 means jump to reveal
 			Database: database,
 		}
 
@@ -905,6 +1011,7 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 
 		fmt.Println("client shuffled successfully", proving_client)
 		client.Close()
+		shuffles_done++
 	}
 	reply.Status = true
 	fmt.Println("Shuffling done")
@@ -1355,4 +1462,17 @@ func CalculateEntriesForFaultToleranceOfOneClient(CertAuditor *CTLogCheckerAudit
 		result[k], _ = DecryptSegments(calculated_res[k], result[k])
 	}
 	return result, err
+}
+
+// / doing encrypting on the whole segment array
+func EncryptSegments(h []byte, segments [][]byte) ([][]byte, error) {
+	encrypted_segments := make([][]byte, len(segments))
+	for i := 0; i < len(segments); i++ {
+		encrypted, err := elgamal.Encrypt(h, segments[i])
+		if err != nil {
+			return nil, err
+		}
+		encrypted_segments[i] = encrypted
+	}
+	return encrypted_segments, nil
 }
