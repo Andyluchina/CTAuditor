@@ -56,7 +56,11 @@ func main() {
 
 	collector_address := args[3]
 
-	shufflers := args[4]
+	shufflers, err := strconv.Atoi(args[4])
+	if err != nil {
+		fmt.Printf("Error: The fifth argument '%s' is not a valid integer.\n", args[4])
+		return
+	}
 
 	threshold := uint32(numClients - clients_sit_out - 1)
 
@@ -75,11 +79,7 @@ func main() {
 	CTLogAuditor.Shamir_curve = curves.P256()
 	CTLogAuditor.CurrentFaultToleranceCount = 0
 	CTLogAuditor.Curve = ecdh.P256()
-	CTLogAuditor.TotalShuffers, err = strconv.Atoi(shufflers)
-	if err != nil {
-		fmt.Printf("Error: The fifth argument '%s' is not a valid integer.\n", args[4])
-		return
-	}
+	CTLogAuditor.TotalShuffers = shufflers
 
 	// initialize PerClientCPU
 	CTLogAuditor.PerClientCPU = []datastruct.AuditorClientCPUReport{}
