@@ -583,9 +583,9 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 			}
 			proving_client := client_info[i].ID
 			certauditor.PerClientCPU[proving_client].ShuffleTime = 0
-			fmt.Println("client shuffled successfully", proving_client)
+			fmt.Println("client no need to shuffle", proving_client)
 			client.Close()
-
+			continue
 		}
 
 		shuffle_request := datastruct.ShufflePhaseAuditorRequest{
