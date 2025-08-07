@@ -565,7 +565,7 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 			reply.Status = false
 			return nil
 		}
-
+		fmt.Println("we have total shufflers", certauditor.TotalShuffers, "and shuffles done", shuffles_done)
 		if shuffles_done >= certauditor.TotalShuffers {
 			shuffle_request := datastruct.ShufflePhaseAuditorRequest{
 				Status:   0, // 1 means shuffle, 0 means jump to reveal
