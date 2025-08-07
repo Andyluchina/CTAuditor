@@ -587,6 +587,7 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 			client.Close()
 			continue
 		}
+		fmt.Println("client need to shuffle", client_info[i].ID)
 
 		shuffle_request := datastruct.ShufflePhaseAuditorRequest{
 			Status:   1, // 1 means shuffle, 0 means jump to reveal
