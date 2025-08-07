@@ -29,7 +29,7 @@ import (
 // client fault tolerance report
 
 type CTLogCheckerAuditor struct {
-	TotalShuffers   int
+	TotalShuffers   uint32
 	Curve           ecdh.Curve
 	ShuffleDatabase string
 	ZKDatabase      string
@@ -528,7 +528,7 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 	}
 
 	client_info := database.Shuffle_PubKeys
-	shuffles_done := 0
+	shuffles_done := uint32(0)
 	for i := 0; i < int(certauditor.TotalClients); i++ {
 		start_part1 := time.Now()
 		client_ip := client_info[i].IP + ":80"
@@ -1150,7 +1150,7 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datas
 			report_stats_req.MaxSitOut = certauditor.MaxSitOut
 			report_stats_req.TotalRunTime = total_time
 			report_stats_req.PerClientCPU = certauditor.PerClientCPU
-			report_stats_req.Shufflers = uint32(certauditor.TotalShuffers)
+			report_stats_req.Shufflers = certauditor.TotalShuffers
 			status_reported := false
 
 			for !status_reported {

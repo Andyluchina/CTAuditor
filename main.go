@@ -79,7 +79,7 @@ func main() {
 	CTLogAuditor.Shamir_curve = curves.P256()
 	CTLogAuditor.CurrentFaultToleranceCount = 0
 	CTLogAuditor.Curve = ecdh.P256()
-	CTLogAuditor.TotalShuffers = shufflers
+	CTLogAuditor.TotalShuffers = uint32(shufflers)
 
 	// initialize PerClientCPU
 	CTLogAuditor.PerClientCPU = []datastruct.AuditorClientCPUReport{}
