@@ -580,11 +580,33 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 			client_took_call := false
 
 			for !client_took_call {
-				err = client.Call("Client.ClientShuffle", shuffle_request, &shuffle_reply)
-				if err == nil {
-					log.Println(err)
-					client_took_call = true
+
+				// assumes: client *rpc.Client, shuffle_request, shuffle_reply defined
+				timeout := 30 * time.Second
+
+				done := make(chan *rpc.Call, 1)
+				call := client.Go("Client.ClientShuffle", shuffle_request, &shuffle_reply, done)
+
+				select {
+				case res := <-call.Done:
+					if res.Error != nil {
+						log.Printf("ClientShuffle RPC failed: %v", res.Error)
+					} else {
+						log.Printf("ClientShuffle OK")
+						client_took_call = true
+					}
+				case <-time.After(timeout):
+					log.Printf("ClientShuffle timed out after %s", timeout)
+					// Optional: hard-cancel by closing the client and rebuilding the connection:
+					// _ = client.Close()
+					// (If you keep the client open, this in-flight call may still complete later.)
 				}
+
+				// err = client.Call("Client.ClientShuffle", shuffle_request, &shuffle_reply)
+				// if err == nil {
+				// 	log.Println(err)
+				// 	client_took_call = true
+				// }
 			}
 			proving_client := client_info[i].ID
 			certauditor.PerClientCPU[proving_client].ShuffleTime = 0
