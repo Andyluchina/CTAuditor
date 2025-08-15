@@ -29,7 +29,6 @@ import (
 // client fault tolerance report
 
 type CTLogCheckerAuditor struct {
-	TotalShuffers   uint32
 	Curve           ecdh.Curve
 	ShuffleDatabase string
 	ZKDatabase      string
@@ -37,6 +36,7 @@ type CTLogCheckerAuditor struct {
 	RevealThreshold uint32
 	MaxSitOut       uint32
 	CurrentState    uint32
+	TotalShuffers   uint32
 	/// dynamic parameters to be updated during the protocol
 	CurrentClientCount     uint32
 	CurrentInitialReporter int
@@ -348,6 +348,7 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 		return err
 	}
 
+	start_auditor_encrypt := time.Now()
 	// encrypt all other entries under this public key
 	for i := 0; i < registration_order; i++ {
 		r_i_prime := elgamal.Generate_Random_Dice_seed(certauditor.Curve)
@@ -414,6 +415,9 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 		// }
 	}
 
+	elapsed_auditor_encrypt := time.Since(start_auditor_encrypt)
+	inital_report_auditor_encrypt_seconds := elapsed_auditor_encrypt.Seconds()
+
 	database.Entries = append(database.Entries, entry)
 
 	certauditor.CurrentInitialReporter = req.ShufflerID
@@ -427,6 +431,7 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 	inital_report_time_seconds := elapsed.Seconds()
 
 	certauditor.PerClientCPU[req.ShufflerID].InitialReportingTime = inital_report_time_seconds
+	certauditor.PerClientCPU[req.ShufflerID].AuditorEncryptionTime = inital_report_auditor_encrypt_seconds
 	return nil
 }
 
