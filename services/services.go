@@ -1019,32 +1019,6 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 
 		WriteZKInfoToZKDatabase(certauditor, &zkdatabase)
 
-		if certauditor.TotalShuffers == shuffles_done {
-			certauditor.CurrentState = Reveal
-			// read ZK database
-			zkdata, err := ReadZKDatabase(certauditor)
-			if err != nil {
-				reply.Status = false
-				return nil
-			}
-
-			var zkdatabase datastruct.ZKDatabase
-			err = json.Unmarshal(zkdata, &zkdatabase)
-			if err != nil {
-				log.Fatalf("Error unmarshaling the JSON: %v", err)
-				reply.Status = false
-				return nil
-			}
-
-			for i := 0; i < len(zkdatabase.ZK_info); i++ {
-				if i != len(zkdatabase.ZK_info)-1 {
-					zkdatabase.ZK_info[i].ShuffleProof.EntriesAfterShuffle = nil
-				}
-			}
-
-			certauditor.RevealZK = zkdatabase.ZK_info
-		}
-
 		shuffle_time_part2 := time.Since(start_part2).Seconds()
 
 		certauditor.PerClientCPU[proving_client].ShuffleTime = shuffle_time_part1 + shuffle_time_part2
@@ -1057,6 +1031,28 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 	fmt.Println("Shuffling done")
 	if shuffles_done == certauditor.TotalShuffers {
 		certauditor.CurrentState = Reveal
+		// read ZK database
+		zkdata, err := ReadZKDatabase(certauditor)
+		if err != nil {
+			reply.Status = false
+			return nil
+		}
+
+		var zkdatabase datastruct.ZKDatabase
+		err = json.Unmarshal(zkdata, &zkdatabase)
+		if err != nil {
+			log.Fatalf("Error unmarshaling the JSON: %v", err)
+			reply.Status = false
+			return nil
+		}
+
+		for i := 0; i < len(zkdatabase.ZK_info); i++ {
+			if i != len(zkdatabase.ZK_info)-1 {
+				zkdatabase.ZK_info[i].ShuffleProof.EntriesAfterShuffle = nil
+			}
+		}
+
+		certauditor.RevealZK = zkdatabase.ZK_info
 	}
 	if certauditor.CurrentState == Reveal {
 		fmt.Println("State changed to Reveal")
