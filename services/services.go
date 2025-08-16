@@ -326,12 +326,17 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 
 	// check if the client has already reported
 	// quiet low prob of collision
-	for i := 0; i < len(database.Entries); i++ {
-		if bytes.Equal(database.Entries[i].Cert_times_h_r10[0], req.InitialEntry.Cert_times_h_r10[0]) {
-			fmt.Println("Client already reported, OR Collision detected! can be bad")
-			reply.Status = false
-			return nil
-		}
+	// for i := 0; i < len(database.Entries); i++ {
+	// 	if bytes.Equal(database.Entries[i].Cert_times_h_r10[0], req.InitialEntry.Cert_times_h_r10[0]) {
+	// 		fmt.Println("Client already reported, OR Collision detected! can be bad")
+	// 		reply.Status = false
+	// 		return nil
+	// 	}
+	// }
+	if certauditor.CurrentInitialReporter >= req.ShufflerID {
+		fmt.Println("Client already reported according to auditor state!")
+		reply.Status = false
+		return nil
 	}
 
 	client_count := int(certauditor.TotalClients)
