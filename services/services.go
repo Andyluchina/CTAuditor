@@ -552,6 +552,14 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 			}
 		}
 
+		dial := func() *rpc.Client {
+			c, err := rpc.Dial("tcp", client_ip)
+			if err != nil {
+				log.Printf("dial to %s failed: %v", client_ip, err)
+				return nil
+			}
+			return c
+		}
 		// read database
 		data, err := ReadDatabase(certauditor)
 
@@ -580,8 +588,13 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 			client_took_call := false
 
 			for !client_took_call {
+				if client == nil {
+					client = dial()
+					if client == nil { // couldn't connect; retry immediately
+						continue
+					}
+				}
 
-				// assumes: client *rpc.Client, shuffle_request, shuffle_reply defined
 				timeout := 30 * time.Second
 
 				done := make(chan *rpc.Call, 1)
@@ -589,24 +602,23 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 
 				select {
 				case res := <-call.Done:
-					if res.Error != nil {
-						log.Printf("ClientShuffle RPC failed: %v", res.Error)
-					} else {
+					if res.Error == nil {
 						log.Printf("ClientShuffle OK")
 						client_took_call = true
+					} else if errors.Is(res.Error, rpc.ErrShutdown) {
+						log.Printf("ClientShuffle: connection is shut down; redialing %s", client_ip)
+						_ = client.Close()
+						client = nil // force redial next iteration
+					} else {
+						log.Printf("ClientShuffle RPC failed: %v (retrying)", res.Error)
+						// retry immediately with same client
 					}
-				case <-time.After(timeout):
-					log.Printf("ClientShuffle timed out after %s", timeout)
-					// Optional: hard-cancel by closing the client and rebuilding the connection:
-					// _ = client.Close()
-					// (If you keep the client open, this in-flight call may still complete later.)
-				}
 
-				// err = client.Call("Client.ClientShuffle", shuffle_request, &shuffle_reply)
-				// if err == nil {
-				// 	log.Println(err)
-				// 	client_took_call = true
-				// }
+				case <-time.After(timeout):
+					log.Printf("ClientShuffle timed out after %s; redialing %s", timeout, client_ip)
+					_ = client.Close() // aborts the in-flight call
+					client = nil       // force redial next iteration
+				}
 			}
 			proving_client := client_info[i].ID
 			certauditor.PerClientCPU[proving_client].ShuffleTime = 0
