@@ -408,87 +408,65 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 	}
 
 	client_count := int(certauditor.TotalClients)
-	registration_order := len(database.Entries)
+
 	// fill shufflers with point of zero
 	entry := &req.InitialEntry
 	for i := 0; i < client_count; i++ {
 		entry.Shufflers = append(entry.Shufflers, elgamal.ReturnInfinityPoint())
 	}
-
+	database.Entries = append(database.Entries, entry)
+	registration_order := len(database.Entries)
 	// find client's shuffling public key
-	init_client_pubkey, err := database.Shuffle_PubKeys[registration_order], nil
-
-	if err != nil {
-		return err
-	}
+	// init_client_pubkey := database.Shuffle_PubKeys[registration_order-1]
 
 	start_auditor_encrypt := time.Now()
 	// encrypt all other entries under this public key
-	for i := 0; i < registration_order; i++ {
-		r_i_prime := elgamal.Generate_Random_Dice_seed(certauditor.Curve)
-		h_r_i_prime, err := elgamal.ECDH_bytes(init_client_pubkey.H_i, r_i_prime)
-		if err != nil {
-			return err
+	R_l_k := make([][][]byte, len(database.Entries))
+	// randomize the entries/ encrypt the entries
+	for i := 0; i < len(database.Entries); i++ {
+		rk := [][]byte{}
+		for j := 0; j < registration_order; j++ {
+			shuffler_info := database.Shuffle_PubKeys[j]
+			keys, err := LocatePublicKeyWithID(shuffler_info.ID, database.Shuffle_PubKeys)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			r_i_prime := elgamal.Generate_Random_Dice_seed(certauditor.Curve)
+			rk = append(rk, r_i_prime)
+			g_r_i_prime, err := elgamal.ECDH_bytes(keys.G_i, r_i_prime)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			/// changing the shuffler entry
+			order := j
+			database.Entries[i].Shufflers[order], err = elgamal.Encrypt(database.Entries[i].Shufflers[order], g_r_i_prime)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			/// changing the msg entry
+			h_r_i_prime, err := elgamal.ECDH_bytes(keys.H_i, r_i_prime)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			database.Entries[i].Cert_times_h_r10, err = EncryptSegments(h_r_i_prime, database.Entries[i].Cert_times_h_r10)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
 		}
-
-		g_r_i_prime, err := elgamal.ECDH_bytes(init_client_pubkey.G_i, r_i_prime)
-		if err != nil {
-			log.Fatalf("%v", err)
-			return err
-		}
-
-		database.Entries[i].Cert_times_h_r10, err = EncryptSegments(h_r_i_prime, database.Entries[i].Cert_times_h_r10)
-		if err != nil {
-			return err
-		}
-
-		// updating shuffler info
-		// entry.Shufflers[i], err = elgamal.Encrypt(entry.Shufflers[i], g_r_i_prime)
-		// if err != nil {
-		// 	return err
 		// }
-
-		// // update the shuffler info, this is where I am shuffling everyone else
-		database.Entries[i].Shufflers[registration_order], err = elgamal.Encrypt(database.Entries[i].Shufflers[registration_order], g_r_i_prime)
-		if err != nil {
-			return err
-		}
+		// rk = append(rk, r_i_k)
+		R_l_k[i] = rk
 	}
-
-	// encrypt this one entry under all other public keys
-	shuffle_pubkeys := database.Shuffle_PubKeys
-	for i := 0; i < registration_order; i++ {
-		r_i_prime := elgamal.Generate_Random_Dice_seed(certauditor.Curve)
-		h_r_i_prime, err := elgamal.ECDH_bytes(shuffle_pubkeys[i].H_i, r_i_prime)
-		if err != nil {
-			return err
-		}
-
-		g_r_i_prime, err := elgamal.ECDH_bytes(shuffle_pubkeys[i].G_i, r_i_prime)
-		if err != nil {
-			log.Fatalf("%v", err)
-			return err
-		}
-
-		/// changing the msg entry
-		entry.Cert_times_h_r10, err = EncryptSegments(h_r_i_prime, entry.Cert_times_h_r10)
-		if err != nil {
-			return err
-		}
-
-		// // updating shuffler info
-		entry.Shufflers[i], err = elgamal.Encrypt(entry.Shufflers[i], g_r_i_prime)
-		if err != nil {
-			return err
-		}
-
-		// update the shuffler info, this is where I am shuffling everyone else
-		// database.Entries[i].Shufflers[registration_order], err = elgamal.Encrypt(database.Entries[i].Shufflers[registration_order], g_r_i_prime)
-		// if err != nil {
-		// 	return err
-		// }
-	}
-
 	elapsed_auditor_encrypt := time.Since(start_auditor_encrypt)
 	inital_report_auditor_encrypt_seconds := elapsed_auditor_encrypt.Seconds()
 
