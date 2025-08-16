@@ -471,183 +471,183 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 	}
 
 	// // *********** doing zk proof for auditor encryption correctness ***********
-	// n := len(database.Entries) // matrix size
-	// l_t := 160
-	// l_s := 16 // a small security parameter
-	// p, q, p_prime, q_prime := database.RSA_P, database.RSA_Q, database.RSA_subgroup_p_prime, database.RSA_subgroup_q_prime
+	n := len(database.Entries) // matrix size
+	l_t := 160
+	l_s := 16 // a small security parameter
+	p, q, p_prime, q_prime := database.RSA_P, database.RSA_Q, database.RSA_subgroup_p_prime, database.RSA_subgroup_q_prime
 
-	// if err != nil {
-	// 	log.Fatalf("%v", err)
-	// 	reply.Status = false
-	// 	return err
-	// }
+	if err != nil {
+		log.Fatalf("%v", err)
+		reply.Status = false
+		return err
+	}
 
-	// N := new(big.Int).Mul(p, q)
-	// order_of_g := new(big.Int).Mul(p_prime, q_prime)
-	// l_r := order_of_g.BitLen() // the order of the unique subgroup can be huge so IDK what to put here
+	N := new(big.Int).Mul(p, q)
+	order_of_g := new(big.Int).Mul(p_prime, q_prime)
+	l_r := order_of_g.BitLen() // the order of the unique subgroup can be huge so IDK what to put here
 
-	// l_s_plus_l_r := l_s + l_r
+	l_s_plus_l_r := l_s + l_r
 
-	// gs := zklib.SampleNGenerators(p_prime, q_prime, n+2)
+	gs := zklib.SampleNGenerators(p_prime, q_prime, n+2)
 
-	// // generating ds
-	// ds := make([]*big.Int, n)
-	// dj := big.NewInt(0)
-	// dn := big.NewInt(0)
-	// for i := 0; i < n; i++ {
-	// 	if i == n-1 {
-	// 		ds[i] = dn
-	// 	} else {
-	// 		d, _ := zklib.GenerateSecureRandomBits(l_t + 8)
-	// 		ds[i] = zklib.SetBigIntWithBytes(d)
-	// 		dn = new(big.Int).Add(dn, new(big.Int).Neg(ds[i]))
-	// 	}
+	// generating ds
+	ds := make([]*big.Int, n)
+	dj := big.NewInt(0)
+	dn := big.NewInt(0)
+	for i := 0; i < n; i++ {
+		if i == n-1 {
+			ds[i] = dn
+		} else {
+			d, _ := zklib.GenerateSecureRandomBits(l_t + 8)
+			ds[i] = zklib.SetBigIntWithBytes(d)
+			dn = new(big.Int).Add(dn, new(big.Int).Neg(ds[i]))
+		}
 
-	// 	dj = new(big.Int).Add(dj, new(big.Int).Mul(ds[i], ds[i]))
-	// }
+		dj = new(big.Int).Add(dj, new(big.Int).Mul(ds[i], ds[i]))
+	}
 
-	// // generate commitments
-	// commitments := make([]*big.Int, n+1)
-	// rs := make([]*big.Int, 0)
-	// for i := 0; i <= n; i++ {
-	// 	if i == n {
-	// 		new_r, err := zklib.GenerateSecureRandomBits(l_t + l_s_plus_l_r)
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 		commitments[i] = zklib.Generate_commitment(gs, ds, dj, new_r, N)
-	// 		rs = append(rs, zklib.SetBigIntWithBytes(new_r))
-	// 	} else {
-	// 		new_r, err := zklib.GenerateSecureRandomBits(l_r)
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 		backward_index, _ := zklib.BackwardMapping(i, permutationMatrix)
-	// 		d_needed := ds[backward_index]
-	// 		d_needed = new(big.Int).Mul(d_needed, big.NewInt(2))
-	// 		commitments[i] = zklib.Generate_commitment(gs, zklib.IntToBigInt(inverse_permutationMatrix[i]), d_needed, new_r, N) // Fix: Add N as the last argument
-	// 		rs = append(rs, zklib.SetBigIntWithBytes(new_r))                                                                    // Fix: Assign the result of append to rs
-	// 	}
-	// }
+	// generate commitments
+	commitments := make([]*big.Int, n+1)
+	rs := make([]*big.Int, 0)
+	for i := 0; i <= n; i++ {
+		if i == n {
+			new_r, err := zklib.GenerateSecureRandomBits(l_t + l_s_plus_l_r)
+			if err != nil {
+				panic(err)
+			}
+			commitments[i] = zklib.Generate_commitment(gs, ds, dj, new_r, N)
+			rs = append(rs, zklib.SetBigIntWithBytes(new_r))
+		} else {
+			new_r, err := zklib.GenerateSecureRandomBits(l_r)
+			if err != nil {
+				panic(err)
+			}
+			backward_index, _ := zklib.BackwardMapping(i, permutationMatrix)
+			d_needed := ds[backward_index]
+			d_needed = new(big.Int).Mul(d_needed, big.NewInt(2))
+			commitments[i] = zklib.Generate_commitment(gs, zklib.IntToBigInt(inverse_permutationMatrix[i]), d_needed, new_r, N) // Fix: Add N as the last argument
+			rs = append(rs, zklib.SetBigIntWithBytes(new_r))                                                                    // Fix: Assign the result of append to rs
+		}
+	}
 
-	// shuffled_entries := ExtractCertsFromEntries(&database)
+	shuffled_entries := ExtractCertsFromEntries(&database)
 
-	// /// generating V_primes, there are two of them, so we have V_prime_X and V_prime_Y
-	// // R_R mean B in the paper btw
-	// B_prime, err := zklib.GenerateSecureRandomBits(l_s_plus_l_r + l_t)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	/// generating V_primes, there are two of them, so we have V_prime_X and V_prime_Y
+	// R_R mean B in the paper btw
+	B_prime, err := zklib.GenerateSecureRandomBits(l_s_plus_l_r + l_t)
+	if err != nil {
+		panic(err)
+	}
 
-	// V_prime_X_pos, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(reportingClient.H_i, B_prime) /// encrypting the zero element
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// V_prime_X, err := elgamal.ReturnNegative(V_prime_X_pos)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	V_prime_X_pos, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(reportingClient.H_i, B_prime) /// encrypting the zero element
+	if err != nil {
+		panic(err)
+	}
+	V_prime_X, err := elgamal.ReturnNegative(V_prime_X_pos)
+	if err != nil {
+		panic(err)
+	}
 
-	// for i := 0; i < n; i++ {
-	// 	X_primes_encrypted_and_permutated_i_d_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(X_primes_encrypted_and_permutated[i], ds[i].Bytes())
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	if ds[i].Cmp(big.NewInt(0)) < 0 {
-	// 		// //("detected negative ds[i] V_prime_X")
-	// 		X_primes_encrypted_and_permutated_i_d_i, err = elgamal.ReturnNegative(X_primes_encrypted_and_permutated_i_d_i)
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 	}
-	// 	V_prime_X, err = elgamal.Encrypt(V_prime_X, X_primes_encrypted_and_permutated_i_d_i)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// }
+	for i := 0; i < n; i++ {
+		X_primes_encrypted_and_permutated_i_d_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(X_primes_encrypted_and_permutated[i], ds[i].Bytes())
+		if err != nil {
+			panic(err)
+		}
+		if ds[i].Cmp(big.NewInt(0)) < 0 {
+			// //("detected negative ds[i] V_prime_X")
+			X_primes_encrypted_and_permutated_i_d_i, err = elgamal.ReturnNegative(X_primes_encrypted_and_permutated_i_d_i)
+			if err != nil {
+				panic(err)
+			}
+		}
+		V_prime_X, err = elgamal.Encrypt(V_prime_X, X_primes_encrypted_and_permutated_i_d_i)
+		if err != nil {
+			panic(err)
+		}
+	}
 
-	// V_prime_Y_pos, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(reportingClient.H_shuffle, B_prime)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	V_prime_Y_pos, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(reportingClient.H_shuffle, B_prime)
+	if err != nil {
+		panic(err)
+	}
 
-	// V_prime_Y, err := elgamal.ReturnNegative(V_prime_Y_pos)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	V_prime_Y, err := elgamal.ReturnNegative(V_prime_Y_pos)
+	if err != nil {
+		panic(err)
+	}
 
-	// for i := 0; i < n; i++ {
-	// 	Y_primes_encrypted_and_permutated_i_d_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(Y_primes_encrypted_and_permutated[i], ds[i].Bytes())
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	if ds[i].Cmp(big.NewInt(0)) < 0 {
-	// 		// //("detected negative ds[i] V_prime_Y")
-	// 		Y_primes_encrypted_and_permutated_i_d_i, err = elgamal.ReturnNegative(Y_primes_encrypted_and_permutated_i_d_i)
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 	}
-	// 	V_prime_Y, err = elgamal.Encrypt(V_prime_Y, Y_primes_encrypted_and_permutated_i_d_i)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// }
+	for i := 0; i < n; i++ {
+		Y_primes_encrypted_and_permutated_i_d_i, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(Y_primes_encrypted_and_permutated[i], ds[i].Bytes())
+		if err != nil {
+			panic(err)
+		}
+		if ds[i].Cmp(big.NewInt(0)) < 0 {
+			// //("detected negative ds[i] V_prime_Y")
+			Y_primes_encrypted_and_permutated_i_d_i, err = elgamal.ReturnNegative(Y_primes_encrypted_and_permutated_i_d_i)
+			if err != nil {
+				panic(err)
+			}
+		}
+		V_prime_Y, err = elgamal.Encrypt(V_prime_Y, Y_primes_encrypted_and_permutated_i_d_i)
+		if err != nil {
+			panic(err)
+		}
+	}
 
-	// // generate the Big_V for the entries
-	// // we have one V for each segment of the entry
-	// Big_Vs := [][]byte{}
-	// // init the Vs
-	// for i := 0; i < len(database.Entries[0].Cert_times_h_r10); i++ {
-	// 	Big_Vs = append(Big_Vs, elgamal.ReturnZeroPoint())
-	// }
-	// // adding up the Ci_di
-	// for i := 0; i < n; i++ {
-	// 	for j := 0; j < len(database.Entries[0].Cert_times_h_r10); j++ {
-	// 		Ci_di, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(database.Entries[i].Cert_times_h_r10[j], ds[i].Bytes())
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 		if ds[i].Cmp(big.NewInt(0)) < 0 {
-	// 			// //("detected negative ds[i]")
-	// 			Ci_di, err = elgamal.ReturnNegative(Ci_di)
-	// 			if err != nil {
-	// 				panic(err)
-	// 			}
-	// 		}
-	// 		Big_Vs[j], err = elgamal.Encrypt(Big_Vs[j], Ci_di)
-	// 	}
-	// }
+	// generate the Big_V for the entries
+	// we have one V for each segment of the entry
+	Big_Vs := [][]byte{}
+	// init the Vs
+	for i := 0; i < len(database.Entries[0].Cert_times_h_r10); i++ {
+		Big_Vs = append(Big_Vs, elgamal.ReturnZeroPoint())
+	}
+	// adding up the Ci_di
+	for i := 0; i < n; i++ {
+		for j := 0; j < len(database.Entries[0].Cert_times_h_r10); j++ {
+			Ci_di, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(database.Entries[i].Cert_times_h_r10[j], ds[i].Bytes())
+			if err != nil {
+				panic(err)
+			}
+			if ds[i].Cmp(big.NewInt(0)) < 0 {
+				// //("detected negative ds[i]")
+				Ci_di, err = elgamal.ReturnNegative(Ci_di)
+				if err != nil {
+					panic(err)
+				}
+			}
+			Big_Vs[j], err = elgamal.Encrypt(Big_Vs[j], Ci_di)
+		}
+	}
 
-	// // Bs are R_R in the paper
-	// // calculate all public keys
-	// Bs := [][]byte{}
-	// for i := 0; i < len(database.Shufflers_info); i++ {
-	// 	B, err := zklib.GenerateSecureRandomBits(l_s_plus_l_r + l_t)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	Bs = append(Bs, B)
-	// }
-	// for i := 0; i < len(database.Shufflers_info); i++ {
-	// 	for j := 0; j < len(database.Entries[0].Cert_times_h_r10); j++ {
-	// 		keys, err := LocatePublicKeyWithID(database.Shufflers_info[i].ID, database.Shuffle_PubKeys)
-	// 		if err != nil {
-	// 			log.Fatalf("%v", err)
-	// 			reply.Status = false
-	// 			return err
-	// 		}
-	// 		// add negative encryption with this public key
-	// 		Enc_B_pos, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(keys.H_i, Bs[i])
-	// 		Enc_B, err := elgamal.ReturnNegative(Enc_B_pos)
-	// 		if err != nil {
-	// 			log.Fatalf("%v", err)
-	// 			reply.Status = false
-	// 			return err
-	// 		}
-	// 		Big_Vs[j], err = elgamal.Encrypt(Big_Vs[j], Enc_B)
-	// 	}
-	// }
+	// Bs are R_R in the paper
+	// calculate all public keys
+	Bs := [][]byte{}
+	for i := 0; i < len(database.Shufflers_info); i++ {
+		B, err := zklib.GenerateSecureRandomBits(l_s_plus_l_r + l_t)
+		if err != nil {
+			panic(err)
+		}
+		Bs = append(Bs, B)
+	}
+	for i := 0; i < len(database.Shufflers_info); i++ {
+		for j := 0; j < len(database.Entries[0].Cert_times_h_r10); j++ {
+			keys, err := LocatePublicKeyWithID(database.Shufflers_info[i].ID, database.Shuffle_PubKeys)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			// add negative encryption with this public key
+			Enc_B_pos, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(keys.H_i, Bs[i])
+			Enc_B, err := elgamal.ReturnNegative(Enc_B_pos)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			Big_Vs[j], err = elgamal.Encrypt(Big_Vs[j], Enc_B)
+		}
+	}
 
 	// ***********
 	elapsed_auditor_encrypt := time.Since(start_auditor_encrypt)
@@ -1723,4 +1723,12 @@ func EncryptSegments(h []byte, segments [][]byte) ([][]byte, error) {
 		encrypted_segments[i] = encrypted
 	}
 	return encrypted_segments, nil
+}
+
+func ExtractCertsFromEntries(database *datastruct.Database) [][][]byte {
+	res := [][][]byte{}
+	for i := 0; i < len(database.Entries); i++ {
+		res = append(res, database.Entries[i].Cert_times_h_r10)
+	}
+	return res
 }
