@@ -29,14 +29,15 @@ import (
 // client fault tolerance report
 
 type CTLogCheckerAuditor struct {
-	Curve           ecdh.Curve
-	ShuffleDatabase string
-	ZKDatabase      string
-	TotalClients    uint32
-	RevealThreshold uint32
-	MaxSitOut       uint32
-	CurrentState    uint32
-	TotalShuffers   uint32
+	Curve             ecdh.Curve
+	ShuffleDatabase   string
+	ZKDatabase        string
+	AuditorZKDatabase string
+	TotalClients      uint32
+	RevealThreshold   uint32
+	MaxSitOut         uint32
+	CurrentState      uint32
+	TotalShuffers     uint32
 	/// dynamic parameters to be updated during the protocol
 	CurrentClientCount     uint32
 	CurrentInitialReporter int
@@ -161,6 +162,48 @@ func InitializeDatabase(a *CTLogCheckerAuditor) error {
 
 	WriteZKInfoToZKDatabase(a, &zkdatabase)
 
+	// auditor zk do it again
+	_, err = os.Stat(a.AuditorZKDatabase)
+
+	// fmt.Println(a.ZKFileName)
+	if err == nil {
+		// File exists, clear its contents
+		err = os.Truncate(a.AuditorZKDatabase, 0)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Cleared contents of %s\n", a.AuditorZKDatabase)
+	} else if os.IsNotExist(err) {
+		// File doesn't exist, create it.
+		file, err := os.Create(a.AuditorZKDatabase)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		fmt.Printf("Created %s\n", a.AuditorZKDatabase)
+	} else {
+		return err
+	}
+
+	auditorzkdata, err := ReadAuditorZKDatabase(a)
+	if err != nil {
+		return err
+	}
+
+	// Unmarshal the byte slice into variable
+	var auditorzkdatabase datastruct.AuditorZKDatabase
+	if len(auditorzkdata) > 0 {
+		err = json.Unmarshal(auditorzkdata, &auditorzkdatabase)
+		if err != nil {
+			return err
+		}
+	} else {
+		auditorzkdatabase = datastruct.AuditorZKDatabase{
+			ZK_info: []*datastruct.ZKRecords{},
+		}
+	}
+
+	WriteAuditorZKInfoToZKDatabase(a, &auditorzkdatabase)
 	return nil
 }
 
@@ -207,8 +250,33 @@ func WriteZKInfoToZKDatabase(certauditor *CTLogCheckerAuditor, zkdb *datastruct.
 	return nil
 }
 
+func WriteAuditorZKInfoToZKDatabase(certauditor *CTLogCheckerAuditor, zkdb *datastruct.AuditorZKDatabase) error {
+	// Marshal the updated array back to a byte slice
+	updatedData, err := json.Marshal(zkdb)
+	// fmt.Println(updatedData)
+	if err != nil {
+		return err
+	}
+
+	// Write the updated data to the file
+	err = os.WriteFile(certauditor.AuditorZKDatabase, updatedData, 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func ReadZKDatabase(certauditor *CTLogCheckerAuditor) ([]byte, error) {
 	data, err := os.ReadFile(certauditor.ZKDatabase)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func ReadAuditorZKDatabase(certauditor *CTLogCheckerAuditor) ([]byte, error) {
+	data, err := os.ReadFile(certauditor.AuditorZKDatabase)
 	if err != nil {
 		return nil, err
 	}

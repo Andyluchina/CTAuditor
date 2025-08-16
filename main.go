@@ -68,6 +68,7 @@ func main() {
 	CTLogAuditor.CollectorAddress = collector_address
 	CTLogAuditor.ShuffleDatabase = "database.json"
 	CTLogAuditor.ZKDatabase = "zkdatabase.json"
+	CTLogAuditor.AuditorZKDatabase = "auditorzkdatabase.json"
 	CTLogAuditor.TotalClients = uint32(numClients)
 	CTLogAuditor.RevealThreshold = threshold
 	CTLogAuditor.MaxSitOut = uint32(clients_sit_out)

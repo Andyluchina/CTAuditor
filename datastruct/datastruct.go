@@ -36,6 +36,10 @@ type ZKDatabase struct {
 	ZK_info []*ZKRecords
 }
 
+type AuditorZKDatabase struct {
+	ZK_info []*ZKRecords
+}
+
 type ZKRecords struct {
 	ShufflerID      int
 	EncryptionProof EcryptionProofRecord
