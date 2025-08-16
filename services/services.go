@@ -288,6 +288,7 @@ func (certauditor *CTLogCheckerAuditor) RegisterClient(request *datastruct.Regis
 	reponse.AssignedID = client_info.ID
 	reponse.TotalClients = certauditor.TotalClients
 	reponse.RevealThreshold = certauditor.RevealThreshold
+
 	return nil
 }
 
@@ -1163,40 +1164,13 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientRevealResult(req *datas
 
 			reveal_calculation_time := time.Since(reveal_calculation_start).Seconds()
 
-			total_time := time.Since(certauditor.StartTime).Seconds()
+			// total_time := time.Since(certauditor.StartTime).Seconds()
 
 			for i := 0; i < int(certauditor.TotalClients); i++ {
 				certauditor.PerClientCPU[i].RevealTime += reveal_calculation_time / float64(certauditor.TotalClients)
 			}
 
 			certauditor.CalculatedEntries = result
-			// report to the collector
-			collector_interface, err := rpc.DialHTTP("tcp", certauditor.CollectorAddress)
-
-			if err != nil {
-				log.Fatal("dialing collector1:", err)
-			}
-
-			var report_stats_reply datastruct.ReportStatsReply
-			report_stats_req := datastruct.AuditorReport{}
-
-			report_stats_req.CalculatedEntries = certauditor.CalculatedEntries
-			report_stats_req.TotalClients = certauditor.TotalClients
-			report_stats_req.MaxSitOut = certauditor.MaxSitOut
-			report_stats_req.TotalRunTime = total_time
-			report_stats_req.PerClientCPU = certauditor.PerClientCPU
-			report_stats_req.Shufflers = certauditor.TotalShuffers
-			status_reported := false
-
-			for !status_reported {
-				err = collector_interface.Call("Collector.ReportStatsAuditor", report_stats_req, &report_stats_reply)
-				if err != nil {
-					log.Fatal("arith error:", err)
-				}
-				if report_stats_reply.Status {
-					status_reported = true
-				}
-			}
 		}
 
 	}
