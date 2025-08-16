@@ -601,7 +601,7 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 					}
 				}
 
-				timeout := 30 * time.Second
+				timeout := 100 * time.Second
 
 				done := make(chan *rpc.Call, 1)
 				call := client.Go("Client.ClientShuffle", shuffle_request, &shuffle_reply, done)
