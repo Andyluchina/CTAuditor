@@ -633,7 +633,7 @@ func (certauditor *CTLogCheckerAuditor) PingStartShuffle(req *datastruct.Shuffle
 			continue
 		}
 		fmt.Println("client need to shuffle", client_info[i].ID)
-
+		fmt.Println("checking database entries before shuffle: ", len(database.Entries))
 		shuffle_request := datastruct.ShufflePhaseAuditorRequest{
 			Status:   1, // 1 means shuffle, 0 means jump to reveal
 			Database: database,
