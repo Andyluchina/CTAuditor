@@ -7,6 +7,7 @@ import (
 	"CTLogchecker/AuditorApp/zklib"
 	"bytes"
 	"crypto/ecdh"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,14 +30,15 @@ import (
 // client fault tolerance report
 
 type CTLogCheckerAuditor struct {
-	Curve           ecdh.Curve
-	ShuffleDatabase string
-	ZKDatabase      string
-	TotalClients    uint32
-	RevealThreshold uint32
-	MaxSitOut       uint32
-	CurrentState    uint32
-	TotalShuffers   uint32
+	Curve             ecdh.Curve
+	ShuffleDatabase   string
+	ZKDatabase        string
+	AuditorZKDatabase string
+	TotalClients      uint32
+	RevealThreshold   uint32
+	MaxSitOut         uint32
+	CurrentState      uint32
+	TotalShuffers     uint32
 	/// dynamic parameters to be updated during the protocol
 	CurrentClientCount     uint32
 	CurrentInitialReporter int
@@ -161,6 +163,48 @@ func InitializeDatabase(a *CTLogCheckerAuditor) error {
 
 	WriteZKInfoToZKDatabase(a, &zkdatabase)
 
+	// auditor zk do it again
+	_, err = os.Stat(a.AuditorZKDatabase)
+
+	// fmt.Println(a.ZKFileName)
+	if err == nil {
+		// File exists, clear its contents
+		err = os.Truncate(a.AuditorZKDatabase, 0)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Cleared contents of %s\n", a.AuditorZKDatabase)
+	} else if os.IsNotExist(err) {
+		// File doesn't exist, create it.
+		file, err := os.Create(a.AuditorZKDatabase)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		fmt.Printf("Created %s\n", a.AuditorZKDatabase)
+	} else {
+		return err
+	}
+
+	auditorzkdata, err := ReadAuditorZKDatabase(a)
+	if err != nil {
+		return err
+	}
+
+	// Unmarshal the byte slice into variable
+	var auditorzkdatabase datastruct.AuditorZKDatabase
+	if len(auditorzkdata) > 0 {
+		err = json.Unmarshal(auditorzkdata, &auditorzkdatabase)
+		if err != nil {
+			return err
+		}
+	} else {
+		auditorzkdatabase = datastruct.AuditorZKDatabase{
+			ZK_info: []*datastruct.ZKAuditorRecords{},
+		}
+	}
+
+	WriteAuditorZKInfoToZKDatabase(a, &auditorzkdatabase)
 	return nil
 }
 
@@ -340,91 +384,292 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 	}
 
 	client_count := int(certauditor.TotalClients)
-	registration_order := len(database.Entries)
+
 	// fill shufflers with point of zero
 	entry := &req.InitialEntry
 	for i := 0; i < client_count; i++ {
 		entry.Shufflers = append(entry.Shufflers, elgamal.ReturnInfinityPoint())
 	}
-
+	database.Entries = append(database.Entries, entry)
+	original_entries := ExtractCertsFromEntries(&database)
+	registration_order := len(database.Entries)
+	// reportingClient := database.Shuffle_PubKeys[registration_order-1]
 	// find client's shuffling public key
-	init_client_pubkey, err := database.Shuffle_PubKeys[registration_order], nil
+	// init_client_pubkey := database.Shuffle_PubKeys[registration_order-1]
+	permutationMatrix := zklib.GenerateIdentityMatrix(client_count)
+	inverse_permutationMatrix, err := zklib.InversePermutationMatrix(permutationMatrix)
+
+	// encrypt all other entries under this public key
+	R_l_k := make([][][]byte, len(database.Entries))
+	// randomize the entries/ encrypt the entries
+	for i := 0; i < len(database.Entries); i++ {
+		rk := [][]byte{}
+		for j := 0; j < registration_order; j++ {
+			shuffler_info := database.Shuffle_PubKeys[j]
+			keys, err := LocatePublicKeyWithID(shuffler_info.ID, database.Shuffle_PubKeys)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			r_i_prime := elgamal.Generate_Random_Dice_seed(certauditor.Curve)
+			rk = append(rk, r_i_prime)
+			g_r_i_prime, err := elgamal.ECDH_bytes(keys.G_i, r_i_prime)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			/// changing the shuffler entry
+			order := j
+			database.Entries[i].Shufflers[order], err = elgamal.Encrypt(database.Entries[i].Shufflers[order], g_r_i_prime)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			/// changing the msg entry
+			h_r_i_prime, err := elgamal.ECDH_bytes(keys.H_i, r_i_prime)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			database.Entries[i].Cert_times_h_r10, err = EncryptSegments(h_r_i_prime, database.Entries[i].Cert_times_h_r10)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+		}
+		// }
+		// rk = append(rk, r_i_k)
+		R_l_k[i] = rk
+	}
+	start_auditor_encrypt_zk := time.Now()
+	// // *********** doing zk proof for auditor encryption correctness ***********
+	n := len(database.Entries) // matrix size
+	l_t := 160
+	l_s := 16 // a small security parameter
+	p, q, p_prime, q_prime := database.RSA_P, database.RSA_Q, database.RSA_subgroup_p_prime, database.RSA_subgroup_q_prime
 
 	if err != nil {
+		log.Fatalf("%v", err)
+		reply.Status = false
 		return err
 	}
 
-	start_auditor_encrypt := time.Now()
-	// encrypt all other entries under this public key
-	for i := 0; i < registration_order; i++ {
-		r_i_prime := elgamal.Generate_Random_Dice_seed(certauditor.Curve)
-		h_r_i_prime, err := elgamal.ECDH_bytes(init_client_pubkey.H_i, r_i_prime)
-		if err != nil {
-			return err
+	N := new(big.Int).Mul(p, q)
+	order_of_g := new(big.Int).Mul(p_prime, q_prime)
+	l_r := order_of_g.BitLen() // the order of the unique subgroup can be huge so IDK what to put here
+
+	l_s_plus_l_r := l_s + l_r
+
+	gs := zklib.SampleNGenerators(p_prime, q_prime, n+2)
+
+	// generating ds
+	ds := make([]*big.Int, n)
+	dj := big.NewInt(0)
+	dn := big.NewInt(0)
+	for i := 0; i < n; i++ {
+		if i == n-1 {
+			ds[i] = dn
+		} else {
+			d, _ := zklib.GenerateSecureRandomBits(l_t + 8)
+			ds[i] = zklib.SetBigIntWithBytes(d)
+			dn = new(big.Int).Add(dn, new(big.Int).Neg(ds[i]))
 		}
 
-		g_r_i_prime, err := elgamal.ECDH_bytes(init_client_pubkey.G_i, r_i_prime)
-		if err != nil {
-			log.Fatalf("%v", err)
-			return err
-		}
+		dj = new(big.Int).Add(dj, new(big.Int).Mul(ds[i], ds[i]))
+	}
 
-		database.Entries[i].Cert_times_h_r10, err = EncryptSegments(h_r_i_prime, database.Entries[i].Cert_times_h_r10)
-		if err != nil {
-			return err
-		}
-
-		// updating shuffler info
-		// entry.Shufflers[i], err = elgamal.Encrypt(entry.Shufflers[i], g_r_i_prime)
-		// if err != nil {
-		// 	return err
-		// }
-
-		// // update the shuffler info, this is where I am shuffling everyone else
-		database.Entries[i].Shufflers[registration_order], err = elgamal.Encrypt(database.Entries[i].Shufflers[registration_order], g_r_i_prime)
-		if err != nil {
-			return err
+	// generate commitments
+	commitments := make([]*big.Int, n+1)
+	rs := make([]*big.Int, 0)
+	for i := 0; i <= n; i++ {
+		if i == n {
+			new_r, err := zklib.GenerateSecureRandomBits(l_t + l_s_plus_l_r)
+			if err != nil {
+				panic(err)
+			}
+			commitments[i] = zklib.Generate_commitment(gs, ds, dj, new_r, N)
+			rs = append(rs, zklib.SetBigIntWithBytes(new_r))
+		} else {
+			new_r, err := zklib.GenerateSecureRandomBits(l_r)
+			if err != nil {
+				panic(err)
+			}
+			backward_index, _ := zklib.BackwardMapping(i, permutationMatrix)
+			d_needed := ds[backward_index]
+			d_needed = new(big.Int).Mul(d_needed, big.NewInt(2))
+			commitments[i] = zklib.Generate_commitment(gs, zklib.IntToBigInt(inverse_permutationMatrix[i]), d_needed, new_r, N) // Fix: Add N as the last argument
+			rs = append(rs, zklib.SetBigIntWithBytes(new_r))                                                                    // Fix: Assign the result of append to rs
 		}
 	}
 
-	// encrypt this one entry under all other public keys
-	shuffle_pubkeys := database.Shuffle_PubKeys
-	for i := 0; i < registration_order; i++ {
-		r_i_prime := elgamal.Generate_Random_Dice_seed(certauditor.Curve)
-		h_r_i_prime, err := elgamal.ECDH_bytes(shuffle_pubkeys[i].H_i, r_i_prime)
-		if err != nil {
-			return err
-		}
+	shuffled_entries := ExtractCertsFromEntries(&database)
 
-		g_r_i_prime, err := elgamal.ECDH_bytes(shuffle_pubkeys[i].G_i, r_i_prime)
-		if err != nil {
-			log.Fatalf("%v", err)
-			return err
-		}
+	/// generating V_primes, there are two of them, so we have V_prime_X and V_prime_Y
+	// R_R mean B in the paper btw
 
-		/// changing the msg entry
-		entry.Cert_times_h_r10, err = EncryptSegments(h_r_i_prime, entry.Cert_times_h_r10)
-		if err != nil {
-			return err
+	// generate the Big_V for the entries
+	// we have one V for each segment of the entry
+	Big_Vs := [][]byte{}
+	// init the Vs
+	for i := 0; i < len(database.Entries[0].Cert_times_h_r10); i++ {
+		Big_Vs = append(Big_Vs, elgamal.ReturnZeroPoint())
+	}
+	// adding up the Ci_di
+	for i := 0; i < n; i++ {
+		for j := 0; j < len(database.Entries[0].Cert_times_h_r10); j++ {
+			Ci_di, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(database.Entries[i].Cert_times_h_r10[j], ds[i].Bytes())
+			if err != nil {
+				panic(err)
+			}
+			if ds[i].Cmp(big.NewInt(0)) < 0 {
+				// //("detected negative ds[i]")
+				Ci_di, err = elgamal.ReturnNegative(Ci_di)
+				if err != nil {
+					panic(err)
+				}
+			}
+			Big_Vs[j], err = elgamal.Encrypt(Big_Vs[j], Ci_di)
 		}
-
-		// // updating shuffler info
-		entry.Shufflers[i], err = elgamal.Encrypt(entry.Shufflers[i], g_r_i_prime)
-		if err != nil {
-			return err
-		}
-
-		// update the shuffler info, this is where I am shuffling everyone else
-		// database.Entries[i].Shufflers[registration_order], err = elgamal.Encrypt(database.Entries[i].Shufflers[registration_order], g_r_i_prime)
-		// if err != nil {
-		// 	return err
-		// }
 	}
 
-	elapsed_auditor_encrypt := time.Since(start_auditor_encrypt)
+	// Bs are R_R in the paper
+	// calculate all public keys
+	Bs := [][]byte{}
+	for i := 0; i < len(database.Shufflers_info); i++ {
+		B, err := zklib.GenerateSecureRandomBits(l_s_plus_l_r + l_t)
+		if err != nil {
+			panic(err)
+		}
+		Bs = append(Bs, B)
+	}
+	for i := 0; i < len(database.Shufflers_info); i++ {
+		for j := 0; j < len(database.Entries[0].Cert_times_h_r10); j++ {
+			keys, err := LocatePublicKeyWithID(database.Shufflers_info[i].ID, database.Shuffle_PubKeys)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			// add negative encryption with this public key
+			Enc_B_pos, err := elgamal.ECDH_bytes_P256_arbitrary_scalar_len(keys.H_i, Bs[i])
+			Enc_B, err := elgamal.ReturnNegative(Enc_B_pos)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			Big_Vs[j], err = elgamal.Encrypt(Big_Vs[j], Enc_B)
+		}
+	}
+
+	// submit shuffled entries, tags(X_primes_encrypted_and_permutated, Y_primes_encrypted_and_permutated), commitments, and Vs to the auditor
+	// auditor will in turn, generate the challenges
+	lambdas := ClientGenerateChallengeShufflingProof_NonInteractive_Groth_And_Lu(
+		original_entries, // original_entries [][][]byte,
+		shuffled_entries, // 	shuffled_entries [][][]byte,
+		commitments,      // commitments []*big.Int,
+		Big_Vs,           // Big_Vs [][]byte,
+		q,                // RSA_Q *big.Int,
+		p,                // RSA_P *big.Int,
+		p_prime,          // RSA_subgroup_p_prime *big.Int,
+		q_prime)          // RSA_subgroup_q_prime *big.Int,
+	// gs,                                // RSA_subgroup_generators []*big.Int,
+	// )           // Updated_Shufflers_info []*ShuffleRecords
+
+	if err != nil {
+		log.Fatalf("%v", err)
+		reply.Status = false
+		return err
+	}
+	// generate the replys
+	fs := make([]*big.Int, n)
+	for i := 0; i < n; i++ {
+		t_pi_j, _ := zklib.ForwardMapping(i, permutationMatrix)
+		fs[i] = new(big.Int).Add(zklib.SetBigIntWithBytes(lambdas[t_pi_j]), ds[i])
+	}
+
+	small_z := big.NewInt(0)
+	for i := 0; i < n; i++ {
+		small_z = new(big.Int).Add(small_z, new(big.Int).Mul(zklib.SetBigIntWithBytes(lambdas[i]), rs[i]))
+	}
+	small_z = new(big.Int).Add(small_z, rs[n])
+
+	/// generate Z_ks **** hard part
+	Z_ks := [][]byte{}
+	// //(len(R_l_k))
+	// //(len(R_l_k[0]))
+	// //(len(Bs))
+	for k := 0; k < len(database.Shufflers_info); k++ {
+		Z_k := zklib.SetBigIntWithBytes(Bs[k])
+		for l := 0; l < n; l++ {
+			R_l_k_one := zklib.SetBigIntWithBytes(R_l_k[l][k])
+			pi_l, err := zklib.ForwardMapping(l, permutationMatrix)
+			if err != nil {
+				log.Fatalf("%v", err)
+				reply.Status = false
+				return err
+			}
+			lambda_pi_l_times_R_l_k := new(big.Int).Mul(zklib.SetBigIntWithBytes(lambdas[pi_l]), R_l_k_one)
+			Z_k = new(big.Int).Add(Z_k, lambda_pi_l_times_R_l_k)
+		}
+		Z_ks = append(Z_ks, Z_k.Bytes())
+	}
+
+	//  write the zk proof info to the auditor zk database
+
+	var auditorzkdatabase datastruct.AuditorZKDatabase
+	zkdata, err := ReadAuditorZKDatabase(certauditor)
+	if err != nil {
+		reply.Status = false
+		return err
+	}
+
+	// Unmarshal the byte slice into variable
+	err = json.Unmarshal(zkdata, &auditorzkdatabase)
+	if err != nil {
+		log.Fatalf("Error unmarshaling the JSON: %v", err)
+		reply.Status = false
+		return err
+	}
+
+	Shufflers_info := []*datastruct.ShuffleRecords{}
+	for i := 0; i < registration_order; i++ {
+		// should just include everyone
+		client_info := &datastruct.ShuffleRecords{
+			ID: i,
+		}
+		Shufflers_info = append(Shufflers_info, client_info)
+	}
+
+	new_auditor_zk_record := &datastruct.ZKAuditorRecords{}
+	new_auditor_zk_record.ShufflerID = req.ShufflerID
+	new_auditor_zk_record.AuditorEncryptionRecord = datastruct.AuditorEncryptionProofRecord{}
+	new_auditor_zk_record.AuditorEncryptionRecord.EntriesBeforeShuffle = original_entries
+	new_auditor_zk_record.AuditorEncryptionRecord.EntriesAfterShuffle = shuffled_entries
+	new_auditor_zk_record.AuditorEncryptionRecord.Commitments = commitments
+	new_auditor_zk_record.AuditorEncryptionRecord.Big_Vs = Big_Vs
+	new_auditor_zk_record.AuditorEncryptionRecord.ChallengesLambda = lambdas
+	new_auditor_zk_record.AuditorEncryptionRecord.Fs = fs
+	new_auditor_zk_record.AuditorEncryptionRecord.SmallZ = small_z
+	new_auditor_zk_record.AuditorEncryptionRecord.Z_ks = Z_ks
+	new_auditor_zk_record.AuditorEncryptionRecord.RSA_subgroup_generators = gs
+	new_auditor_zk_record.AuditorEncryptionRecord.Updated_Shufflers_info = Shufflers_info
+
+	auditorzkdatabase.ZK_info = append(auditorzkdatabase.ZK_info, new_auditor_zk_record)
+
+	err = WriteAuditorZKInfoToZKDatabase(certauditor, &auditorzkdatabase)
+	if err != nil {
+		reply.Status = false
+		return err
+	}
+
+	elapsed_auditor_encrypt := time.Since(start_auditor_encrypt_zk)
 	inital_report_auditor_encrypt_seconds := elapsed_auditor_encrypt.Seconds()
-
-	database.Entries = append(database.Entries, entry)
 
 	certauditor.CurrentInitialReporter = req.ShufflerID
 	fmt.Println("Client reported successfully ", certauditor.CurrentInitialReporter)
@@ -1104,7 +1349,23 @@ func (certauditor *CTLogCheckerAuditor) RevealPhaseClientAcquireDatabase(req *da
 		return nil
 	}
 
+	var auditorzkdatabase datastruct.AuditorZKDatabase
+	zkdata, err := ReadAuditorZKDatabase(certauditor)
+	if err != nil {
+		reply.Status = false
+		return err
+	}
+
+	// Unmarshal the byte slice into variable
+	err = json.Unmarshal(zkdata, &auditorzkdatabase)
+	if err != nil {
+		log.Fatalf("Error unmarshaling the JSON: %v", err)
+		reply.Status = false
+		return err
+	}
+
 	reply.ZK_info = certauditor.RevealZK
+	reply.AuditorZKInfo = auditorzkdatabase.ZK_info
 
 	reply.Database = database
 	reply.Status = true
@@ -1494,4 +1755,82 @@ func EncryptSegments(h []byte, segments [][]byte) ([][]byte, error) {
 		encrypted_segments[i] = encrypted
 	}
 	return encrypted_segments, nil
+}
+
+func ExtractCertsFromEntries(database *datastruct.Database) [][][]byte {
+	res := [][][]byte{}
+	for i := 0; i < len(database.Entries); i++ {
+		res = append(res, database.Entries[i].Cert_times_h_r10)
+	}
+	return res
+}
+
+func ClientGenerateChallengeShufflingProof_NonInteractive_Groth_And_Lu(
+	orginal_entries [][][]byte,
+	shuffled_entries [][][]byte,
+	commitments []*big.Int,
+	Big_Vs [][]byte,
+	RSA_Q *big.Int,
+	RSA_P *big.Int,
+	RSA_subgroup_p_prime *big.Int,
+	RSA_subgroup_q_prime *big.Int) [][]byte {
+	// generate the challenges
+	c := [][]byte{}
+	for i := 0; i < len(orginal_entries); i++ {
+		params1 := flattenBytes(orginal_entries[i])
+		params5 := commitments[i]
+		params9 := RSA_Q
+		params10 := RSA_P
+		params11 := RSA_subgroup_p_prime
+		params12 := RSA_subgroup_q_prime
+
+		combined := append([]byte{}, params1...)
+		combined = append(combined, params5.Bytes()...)
+		combined = append(combined, params9.Bytes()...)
+		combined = append(combined, params10.Bytes()...)
+		combined = append(combined, params11.Bytes()...)
+		combined = append(combined, params12.Bytes()...)
+
+		hasher := sha256.New()
+		hasher.Write(combined)
+		hash := hasher.Sum(nil)
+		c = append(c, hash)
+	}
+
+	return c
+}
+
+// flattenBytes takes a 2D slice of bytes and flattens it into a 1D slice.
+func flattenBytes(twoD [][]byte) []byte {
+	var oneD []byte
+	for _, slice := range twoD {
+		// Append each sub-slice to the new slice.
+		oneD = append(oneD, slice...)
+	}
+	return oneD
+}
+
+func ReadAuditorZKDatabase(certauditor *CTLogCheckerAuditor) ([]byte, error) {
+	data, err := os.ReadFile(certauditor.AuditorZKDatabase)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func WriteAuditorZKInfoToZKDatabase(certauditor *CTLogCheckerAuditor, zkdb *datastruct.AuditorZKDatabase) error {
+	// Marshal the updated array back to a byte slice
+	updatedData, err := json.Marshal(zkdb)
+	// fmt.Println(updatedData)
+	if err != nil {
+		return err
+	}
+
+	// Write the updated data to the file
+	err = os.WriteFile(certauditor.AuditorZKDatabase, updatedData, 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
