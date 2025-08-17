@@ -396,7 +396,7 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 	// reportingClient := database.Shuffle_PubKeys[registration_order-1]
 	// find client's shuffling public key
 	// init_client_pubkey := database.Shuffle_PubKeys[registration_order-1]
-	permutationMatrix := zklib.GenerateIdentityMatrix(client_count)
+	permutationMatrix := zklib.GenerateIdentityMatrix(registration_order)
 	inverse_permutationMatrix, err := zklib.InversePermutationMatrix(permutationMatrix)
 	database.Shufflers_info = []*datastruct.ShuffleRecords{}
 	for i := 0; i < registration_order; i++ {
