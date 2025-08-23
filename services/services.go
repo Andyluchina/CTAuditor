@@ -397,7 +397,7 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 	// find client's shuffling public key
 	// init_client_pubkey := database.Shuffle_PubKeys[registration_order-1]
 	permutationMatrix := zklib.GenerateIdentityMatrix(registration_order)
-	inverse_permutationMatrix, err := zklib.InversePermutationMatrix(permutationMatrix)
+	inverse_permutationMatrix := permutationMatrix
 	database.Shufflers_info = []*datastruct.ShuffleRecords{}
 	for i := 0; i < registration_order; i++ {
 		// should just include everyone
@@ -516,9 +516,6 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 
 	shuffled_entries := ExtractCertsFromEntries(&database)
 
-	/// generating V_primes, there are two of them, so we have V_prime_X and V_prime_Y
-	// R_R mean B in the paper btw
-
 	// generate the Big_V for the entries
 	// we have one V for each segment of the entry
 	Big_Vs := [][]byte{}
@@ -608,9 +605,6 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntry(req *datastruct.Inita
 
 	/// generate Z_ks **** hard part
 	Z_ks := [][]byte{}
-	// //(len(R_l_k))
-	// //(len(R_l_k[0]))
-	// //(len(Bs))
 	for k := 0; k < len(database.Shufflers_info); k++ {
 		Z_k := zklib.SetBigIntWithBytes(Bs[k])
 		for l := 0; l < n; l++ {
@@ -738,7 +732,7 @@ func (certauditor *CTLogCheckerAuditor) ReportInitialEntrySecreteShare(req *data
 
 	WriteRevealInfoToDatabase(certauditor, &database)
 
-	if len(database.Entries) == int(certauditor.TotalClients) {
+	if len(database.Entries) == int(certauditor.TotalClients) && len(database.SecreteShareMap) == int(certauditor.TotalClients) {
 		fmt.Println("state changed to shuffle")
 		certauditor.CurrentState = Shuffle
 		// certauditor.CurrentShuffler = -1
